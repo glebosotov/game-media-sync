@@ -139,20 +139,37 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
         all_files = os.listdir(mpd_dir)
         print(f"📂 Files in MPD directory: {all_files}")
 
-        # Look for init files and chunk files
+        # Look for init files and chunk files, ensuring init comes first
+        video_init = None
+        audio_init = None
+        video_chunk_files = []
+        audio_chunk_files = []
+
         for file in all_files:
             if file.startswith("init-stream0.m4s"):
-                video_chunks.append(os.path.join(mpd_dir, file))
+                video_init = os.path.join(mpd_dir, file)
             elif file.startswith("init-stream1.m4s"):
-                audio_chunks.append(os.path.join(mpd_dir, file))
+                audio_init = os.path.join(mpd_dir, file)
             elif file.startswith("chunk-stream0-") and file.endswith(".m4s"):
-                video_chunks.append(os.path.join(mpd_dir, file))
+                video_chunk_files.append(os.path.join(mpd_dir, file))
             elif file.startswith("chunk-stream1-") and file.endswith(".m4s"):
-                audio_chunks.append(os.path.join(mpd_dir, file))
+                audio_chunk_files.append(os.path.join(mpd_dir, file))
 
-        # Sort chunks to ensure proper order
-        video_chunks.sort()
-        audio_chunks.sort()
+        # Sort chunk files to ensure proper order
+        video_chunk_files.sort()
+        audio_chunk_files.sort()
+
+        # Build final lists: init first, then chunks
+        video_chunks = []
+        audio_chunks = []
+
+        if video_init:
+            video_chunks.append(video_init)
+        video_chunks.extend(video_chunk_files)
+
+        if audio_init:
+            audio_chunks.append(audio_init)
+        audio_chunks.extend(audio_chunk_files)
 
         print(f"📹 Found {len(video_chunks)} video chunks")
         print(f"🔊 Found {len(audio_chunks)} audio chunks")
@@ -292,34 +309,7 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
                 print(f"   Return code: {result.returncode}")
                 print(f"   Stderr: {result.stderr}")
                 print(f"   Stdout: {result.stdout}")
-
-                # Fallback: Try original MPD approach
-                print("🔄 Trying fallback MPD approach...")
-                cmd_fallback = [
-                    "ffmpeg",
-                    "-i",
-                    session_mpd_path,
-                    "-c",
-                    "copy",
-                    "-y",
-                    output_path,
-                ]
-
-                result_fallback = subprocess.run(
-                    cmd_fallback,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                )
-
-                if result_fallback.returncode == 0 and os.path.exists(output_path):
-                    print(f"✅ Fallback conversion successful: {output_path}")
-                    return True
-                else:
-                    print(
-                        f"❌ Fallback conversion also failed: {result_fallback.stderr}"
-                    )
-                    return False
+                return False
 
         finally:
             # Clean up temporary files

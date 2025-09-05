@@ -14,10 +14,13 @@ Process:
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional
+
+from mutagen.mp4 import MP4
 
 import steamstuff
 from transfer_handler import upload_video
@@ -325,26 +328,29 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
         return False
 
 
-def set_file_timestamps(file_path: str, creation_time: int) -> None:
-    """Set file creation and modification times."""
+def update_mp4_metadata(source_path: str, dest_path: str, dt_object: datetime) -> bool:
+    """Copies an MP4 and updates metadata in the destination file."""
     try:
-        # Convert creation_time to float (os.utime expects float)
-        timestamp = float(creation_time)
-
-        print(f"🕒 Setting file timestamps to: {timestamp}")
-        print(f"🕒 Human readable: {datetime.fromtimestamp(timestamp)}")
-
-        # Set both access time and modification time to the original clip time
-        os.utime(file_path, (timestamp, timestamp))
-
-        # Verify the timestamp was set correctly
-        stat_info = os.stat(file_path)
-        print(
-            f"✅ File timestamps set - mtime: {stat_info.st_mtime}, atime: {stat_info.st_atime}"
-        )
-
+        shutil.copy2(source_path, dest_path)
+        video = MP4(dest_path)
+        video["\xa9day"] = [dt_object.strftime("%Y-%m-%dT%H:%M:%SZ")]
+        video.save()
+        print(f"Processed MP4: {os.path.basename(dest_path)}")
+        return True
     except Exception as e:
-        print(f"❌ Error setting file timestamps: {e}")
+        print(f"Error processing MP4 {os.path.basename(source_path)}: {e}")
+        return False
+
+
+def update_file_system_timestamp(file_path: str, dt_object: datetime) -> None:
+    """Updates the file system's 'created' and 'modified' times for the new file."""
+    try:
+        timestamp = dt_object.timestamp()
+        os.utime(file_path, (timestamp, timestamp))
+    except Exception as e:
+        print(
+            f"Could not update file system timestamp for {os.path.basename(file_path)}: {e}"
+        )
 
 
 def upload_clip_to_immich(clip_info: Dict, game_name: Optional[str] = None) -> bool:
@@ -386,8 +392,18 @@ def upload_clip_to_immich(clip_info: Dict, game_name: Optional[str] = None) -> b
         if not convert_clip_to_mp4(clip_info["session_mpd"], temp_mp4_path):
             return False
 
-        # Set proper timestamps using the extracted creation time from folder name
-        set_file_timestamps(temp_mp4_path, clip_info["creation_time"])
+        # Set proper timestamps and metadata using the extracted creation time from folder name
+        creation_datetime = datetime.fromtimestamp(clip_info["creation_time"])
+
+        # Create a new file with proper MP4 metadata
+        final_mp4_path = temp_mp4_path.replace(".mp4", "_final.mp4")
+
+        # Update MP4 metadata with creation date
+        update_mp4_metadata(temp_mp4_path, final_mp4_path, creation_datetime)
+        # Also set file system timestamps
+        update_file_system_timestamp(final_mp4_path, creation_datetime)
+        # Use the final file for upload
+        temp_mp4_path = final_mp4_path
 
         # Upload to Immich using regular video upload function
         # The file timestamps are now set correctly, so Immich will read the right date
@@ -403,9 +419,14 @@ def upload_clip_to_immich(clip_info: Dict, game_name: Optional[str] = None) -> b
         return success
 
     finally:
-        # Clean up temporary file
+        # Clean up temporary files
         try:
             os.unlink(temp_mp4_path)
+            # Also clean up the original temp file if we created a final version
+            if temp_mp4_path.endswith("_final.mp4"):
+                original_path = temp_mp4_path.replace("_final.mp4", ".mp4")
+                if os.path.exists(original_path):
+                    os.unlink(original_path)
         except Exception:
             pass
 

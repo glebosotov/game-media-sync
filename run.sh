@@ -2,4 +2,4 @@
 
 source .venv/bin/activate
 
-python upload_screenshots.py
+python upload_screenshots.py --both

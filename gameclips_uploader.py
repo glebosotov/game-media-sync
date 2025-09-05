@@ -176,18 +176,54 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
             # Combine video chunks
             if video_chunks:
                 print("🔗 Combining video chunks...")
+                print(f"📹 Video chunks: {[os.path.basename(f) for f in video_chunks]}")
                 with open(temp_video_path, "wb") as outfile:
                     for chunk in video_chunks:
-                        with open(chunk, "rb") as infile:
-                            outfile.write(infile.read())
+                        if os.path.exists(chunk):
+                            with open(chunk, "rb") as infile:
+                                data = infile.read()
+                                outfile.write(data)
+                                print(
+                                    f"  ✅ Added {os.path.basename(chunk)} ({len(data)} bytes)"
+                                )
+                        else:
+                            print(f"  ❌ Missing chunk: {chunk}")
+
+                # Verify the combined file was created and has content
+                if os.path.exists(temp_video_path):
+                    video_size = os.path.getsize(temp_video_path)
+                    print(
+                        f"📹 Combined video file: {temp_video_path} ({video_size} bytes)"
+                    )
+                else:
+                    print("❌ Failed to create combined video file")
+                    return False
 
             # Combine audio chunks (if any)
             if audio_chunks:
                 print("🔗 Combining audio chunks...")
+                print(f"🔊 Audio chunks: {[os.path.basename(f) for f in audio_chunks]}")
                 with open(temp_audio_path, "wb") as outfile:
                     for chunk in audio_chunks:
-                        with open(chunk, "rb") as infile:
-                            outfile.write(infile.read())
+                        if os.path.exists(chunk):
+                            with open(chunk, "rb") as infile:
+                                data = infile.read()
+                                outfile.write(data)
+                                print(
+                                    f"  ✅ Added {os.path.basename(chunk)} ({len(data)} bytes)"
+                                )
+                        else:
+                            print(f"  ❌ Missing chunk: {chunk}")
+
+                # Verify the combined file was created and has content
+                if os.path.exists(temp_audio_path):
+                    audio_size = os.path.getsize(temp_audio_path)
+                    print(
+                        f"🔊 Combined audio file: {temp_audio_path} ({audio_size} bytes)"
+                    )
+                else:
+                    print("❌ Failed to create combined audio file")
+                    return False
 
             # Use FFmpeg to combine video and audio streams (based on reference)
             if audio_chunks:
@@ -224,6 +260,22 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
                 ]
 
             print(f"🎬 Final FFmpeg command: {' '.join(cmd)}")
+
+            # Check if input files exist and have content
+            if os.path.exists(temp_video_path):
+                video_size = os.path.getsize(temp_video_path)
+                print(f"📹 Input video file: {temp_video_path} ({video_size} bytes)")
+            else:
+                print(f"❌ Input video file missing: {temp_video_path}")
+                return False
+
+            if audio_chunks and os.path.exists(temp_audio_path):
+                audio_size = os.path.getsize(temp_audio_path)
+                print(f"🔊 Input audio file: {temp_audio_path} ({audio_size} bytes)")
+            elif audio_chunks:
+                print(f"❌ Input audio file missing: {temp_audio_path}")
+                return False
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -232,10 +284,14 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
             )
 
             if result.returncode == 0 and os.path.exists(output_path):
-                print(f"✅ Conversion successful: {output_path}")
+                output_size = os.path.getsize(output_path)
+                print(f"✅ Conversion successful: {output_path} ({output_size} bytes)")
                 return True
             else:
-                print(f"❌ FFmpeg conversion failed: {result.stderr}")
+                print("❌ FFmpeg conversion failed:")
+                print(f"   Return code: {result.returncode}")
+                print(f"   Stderr: {result.stderr}")
+                print(f"   Stdout: {result.stdout}")
 
                 # Fallback: Try original MPD approach
                 print("🔄 Trying fallback MPD approach...")
@@ -282,22 +338,23 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
 def set_file_timestamps(file_path: str, creation_time: int) -> None:
     """Set file creation and modification times."""
     try:
+        # Convert creation_time to float (os.utime expects float)
+        timestamp = float(creation_time)
+
+        print(f"🕒 Setting file timestamps to: {timestamp}")
+        print(f"🕒 Human readable: {datetime.fromtimestamp(timestamp)}")
+
         # Set both access time and modification time to the original clip time
-        os.utime(file_path, (creation_time, creation_time))
+        os.utime(file_path, (timestamp, timestamp))
 
-        # On some systems, we might also need to set the creation time
-        # This is a best-effort approach since not all systems support it
-        try:
-            # Try to set creation time (works on some systems)
-            if hasattr(os, "utime") and hasattr(os, "stat"):
-                # Some systems allow setting birth time through utime
-                pass
-        except Exception:
-            pass
+        # Verify the timestamp was set correctly
+        stat_info = os.stat(file_path)
+        print(
+            f"✅ File timestamps set - mtime: {stat_info.st_mtime}, atime: {stat_info.st_atime}"
+        )
 
-        print(f"📅 Set timestamps to: {datetime.fromtimestamp(creation_time)}")
     except Exception as e:
-        print(f"Warning: Could not set timestamps for {file_path}: {e}")
+        print(f"❌ Error setting file timestamps: {e}")
 
 
 def upload_clip_to_immich(clip_info: Dict, game_name: Optional[str] = None) -> bool:

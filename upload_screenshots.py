@@ -6,10 +6,12 @@ Uploads all screenshots made since the last successful upload to Immich
 
 import json
 import os
+import sys
 from datetime import datetime
 
 import steamstuff
 import vdf
+from game_name_resolver import get_game_name
 from transfer_handler import upload_screenshot
 
 try:
@@ -96,7 +98,20 @@ def get_new_screenshots(screenshots, last_upload_time):
 
 
 def main():
-    """Main function to upload new screenshots"""
+    """Main function to upload new screenshots and clips"""
+    # Check command line arguments
+    upload_clips = "--clips" in sys.argv or "-c" in sys.argv
+    upload_screenshots = (
+        "--screenshots" in sys.argv or "-s" in sys.argv or not upload_clips
+    )
+
+    if upload_clips and not upload_screenshots:
+        # Only upload clips
+        from gameclips_uploader import main as upload_clips_main
+
+        upload_clips_main()
+        return
+
     print("Steam Screenshot Upload Script")
     print("=" * 40)
 
@@ -149,9 +164,13 @@ def main():
             failed_uploads += 1
             continue
 
+        # try to get game name
+        game_name = get_game_name(screenshot["game_id"])
+        print(f"   Game Name: {game_name}")
+
         # Upload to Immich
-        if upload_screenshot(screenshot["full_path"]):
-            print(f"   ✅ Upload successful")
+        if upload_screenshot(screenshot["full_path"], game_name):
+            print("   ✅ Upload successful")
             successful_uploads += 1
             # Update tracker
             uploaded_screenshots.append(
@@ -162,7 +181,7 @@ def main():
                 }
             )
         else:
-            print(f"   ❌ Upload failed")
+            print("   ❌ Upload failed")
             failed_uploads += 1
 
     # Update tracker with latest upload time
@@ -186,4 +205,32 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] in ["--help", "-h"]:
+        print("Steam Screenshot Upload Script")
+        print("Usage:")
+        print("  python upload_screenshots.py           # Upload screenshots only")
+        print("  python upload_screenshots.py --clips   # Upload clips only")
+        print(
+            "  python upload_screenshots.py --both    # Upload both screenshots and clips"
+        )
+        print("  python upload_screenshots.py --help    # Show this help")
+        sys.exit(0)
+
+    # Check for --both flag to upload both
+    if "--both" in sys.argv:
+        print("Uploading both screenshots and clips...")
+        print("=" * 50)
+
+        # Upload screenshots first
+        print("\n📸 UPLOADING SCREENSHOTS")
+        print("-" * 30)
+        main()  # This will upload screenshots
+
+        # Then upload clips
+        print("\n🎬 UPLOADING CLIPS")
+        print("-" * 30)
+        from gameclips_uploader import main as upload_clips_main
+
+        upload_clips_main()
+    else:
+        main()

@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""
+Game Name Resolver
+Resolves a Steam game's human-readable name from its app ID.
+
+Resolution strategy:
+- SteamDB HTML page: https://steamdb.info/app/<app_id>/ (parse <title>)
+"""
+
+import html as htmllib
+import json
+import os
+import re
+from functools import lru_cache
+from typing import Optional
+
+import requests
+
+
+def _try_steamdb(app_id: int, timeout: float = 5.0) -> Optional[str]:
+    """Query SteamDB app page and parse the game name from multiple HTML sources."""
+    url = f"https://steamdb.info/app/{app_id}/"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://steamdb.info/",
+        "Connection": "close",
+    }
+
+    def _clean_candidate(text: str) -> Optional[str]:
+        text = htmllib.unescape(text or "").strip()
+        if not text:
+            return None
+        if "·" in text:
+            text = text.split("·", 1)[0].strip()
+        for marker in ["· SteamDB", "- SteamDB", "· AppID", "AppID:", "on SteamDB"]:
+            idx = text.find(marker)
+            if idx > 0:
+                text = text[:idx].strip()
+        return text or None
+
+    def _parse_html_for_name(html_text: str) -> Optional[str]:
+        # 1) <title>
+        m = re.search(
+            r"<title>(.*?)</title>", html_text, flags=re.IGNORECASE | re.DOTALL
+        )
+        if m:
+            cleaned = _clean_candidate(m.group(1))
+            if cleaned:
+                return cleaned
+
+        # 2) OpenGraph meta: <meta property="og:title" content="...">
+        m = re.search(
+            r"<meta[^>]+property=\"og:title\"[^>]+content=\"(.*?)\"",
+            html_text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if m:
+            cleaned = _clean_candidate(m.group(1))
+            if cleaned:
+                return cleaned
+
+        # 3) Twitter title
+        m = re.search(
+            r"<meta[^>]+name=\"twitter:title\"[^>]+content=\"(.*?)\"",
+            html_text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if m:
+            cleaned = _clean_candidate(m.group(1))
+            if cleaned:
+                return cleaned
+
+        # 4) JSON-LD
+        m = re.search(
+            r"<script[^>]+type=\"application/ld\+json\"[^>]*>(.*?)</script>",
+            html_text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if m:
+            try:
+                import json as _json
+
+                data = _json.loads(m.group(1))
+                if isinstance(data, dict) and isinstance(data.get("name"), str):
+                    cleaned = _clean_candidate(data["name"])
+                    if cleaned:
+                        return cleaned
+            except Exception:
+                pass
+
+        # 5) <h1>
+        m = re.search(
+            r"<h1[^>]*>(.*?)</h1>", html_text, flags=re.IGNORECASE | re.DOTALL
+        )
+        if m:
+            content = re.sub(r"<[^>]+>", "", m.group(1))
+            cleaned = _clean_candidate(content)
+            if cleaned:
+                return cleaned
+
+        return None
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        html_text = resp.text
+        name = _parse_html_for_name(html_text)
+        if name:
+            return name
+
+        # Try the info subpage as a fallback
+        resp2 = requests.get(url + "info/", headers=headers, timeout=timeout)
+        resp2.raise_for_status()
+        html_text2 = resp2.text
+        name2 = _parse_html_for_name(html_text2)
+        if name2:
+            return name2
+    except Exception:
+        pass
+    return None
+
+
+@lru_cache(maxsize=1024)
+def get_game_name(app_id: int) -> Optional[str]:
+    """Resolve human-readable game name by app ID.
+
+    Returns the name string if found, else None.
+    """
+    # 0) Local persistent cache
+    cached = _get_cached_name(app_id)
+    if cached:
+        return cached
+
+    # 1) Prefer official Steam Store API
+    name = _try_store_api(app_id)
+    if name:
+        _set_cached_name(app_id, name)
+        return name
+    # 2) Fallback to SteamDB HTML parsing
+    name = _try_steamdb(app_id)
+    if name:
+        _set_cached_name(app_id, name)
+        return name
+    return None
+
+
+def _try_store_api(
+    app_id: int, timeout: float = 5.0, language: str = "en", country: str = "us"
+) -> Optional[str]:
+    """Query the public Steam Store API for app details to get the name.
+
+    Docs: https://store.steampowered.com/api/appdetails?appids=<id>
+    """
+    try:
+        resp = requests.get(
+            "https://store.steampowered.com/api/appdetails",
+            params={"appids": str(app_id), "cc": country, "l": language},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        entry = payload.get(str(app_id)) or payload.get(int(app_id))
+        if (
+            isinstance(entry, dict)
+            and entry.get("success")
+            and isinstance(entry.get("data"), dict)
+        ):
+            name = entry["data"].get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+    except Exception:
+        pass
+    return None
+
+
+# -----------------------------
+# Simple persistent JSON cache
+# -----------------------------
+
+_CACHE_FILENAME = "steam_app_cache.json"
+_CACHE_PATH = os.path.join(os.path.dirname(__file__), _CACHE_FILENAME)
+_cache_dict = None  # type: ignore[var-annotated]
+
+
+def _load_cache() -> dict:
+    global _cache_dict
+    if _cache_dict is not None:
+        return _cache_dict
+    try:
+        if os.path.exists(_CACHE_PATH):
+            with open(_CACHE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    _cache_dict = {
+                        str(k): v for k, v in data.items() if isinstance(v, str)
+                    }
+                    return _cache_dict
+    except Exception:
+        pass
+    _cache_dict = {}
+    return _cache_dict
+
+
+def _save_cache() -> None:
+    try:
+        tmp_path = _CACHE_PATH + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(_load_cache(), f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, _CACHE_PATH)
+    except Exception:
+        # Ignore cache write errors
+        pass
+
+
+def _get_cached_name(app_id: int) -> Optional[str]:
+    cache = _load_cache()
+    value = cache.get(str(app_id))
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _set_cached_name(app_id: int, name: str) -> None:
+    cache = _load_cache()
+    if cache.get(str(app_id)) == name:
+        return
+    cache[str(app_id)] = name
+    _save_cache()
+
+
+if __name__ == "__main__":
+    # Basic CLI for ad-hoc testing: python game_name_resolver.py <app_id>
+    import sys
+
+    if len(sys.argv) != 2:
+        print("Usage: game_name_resolver.py <app_id>")
+        sys.exit(1)
+    try:
+        app_id = int(sys.argv[1])
+    except ValueError:
+        print("App ID must be an integer")
+        sys.exit(1)
+
+    result = get_game_name(app_id)
+    if result:
+        print(json.dumps({"app_id": app_id, "name": result}))
+    else:
+        print(json.dumps({"app_id": app_id, "name": None}))

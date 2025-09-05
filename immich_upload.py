@@ -2,6 +2,7 @@ import hashlib
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict
 
 import requests
@@ -43,7 +44,9 @@ def extract_date_from_filename(filename: str) -> datetime:
         return datetime.fromtimestamp(os.path.getctime(filename))
 
 
-def add_exif_date_to_image(input_path: str, creation_date: datetime) -> str:
+def add_exif_date_to_image(
+    input_path: str, creation_date: datetime, game_name: str
+) -> str:
     """
     Add EXIF creation date to an image and return the path to the modified file.
 
@@ -74,9 +77,9 @@ def add_exif_date_to_image(input_path: str, creation_date: datetime) -> str:
             img_exif[Base.DateTimeOriginal] = date_string
             img_exif[Base.DateTimeDigitized] = date_string
             img_exif[Base.DateTime] = date_string
+            img_exif[Base.ImageDescription] = game_name
 
             # Create a temporary file path without replacing leading dot in directories
-            import os
 
             base, ext = os.path.splitext(input_path)
             temp_path = f"{base}_exif{ext}"
@@ -108,8 +111,10 @@ def upload_file_to_immich(
     filename: str,
     api_key: str,
     server_url: str,
+    game_name: str = None,
     is_favorite: bool = False,
     visibility: str = "timeline",
+    media_type: str = "screenshot",
 ) -> Dict[str, Any]:
     """
     Upload a file to Immich using the correct API endpoint.
@@ -151,9 +156,22 @@ def upload_file_to_immich(
         "x-immich-checksum": checksum,
     }
 
-    # Extract the actual creation date from filename
-    creation_date = extract_date_from_filename(filename)
-    file_modified_date = datetime.fromtimestamp(os.path.getmtime(filename))
+    # Determine file type and extract creation date accordingly
+    file_extension = Path(filename).suffix.lower()
+    is_video = file_extension in [".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"]
+
+    if is_video:
+        # For videos, use file system timestamps (they should be set correctly by our conversion)
+        creation_date = datetime.fromtimestamp(os.path.getctime(filename))
+        file_modified_date = datetime.fromtimestamp(os.path.getmtime(filename))
+        upload_file_path = filename  # No EXIF processing for videos
+        print(f"🎬 Processing video file: {filename}")
+    else:
+        # For images (screenshots), use the existing logic
+        creation_date = extract_date_from_filename(filename)
+        file_modified_date = datetime.fromtimestamp(os.path.getmtime(filename))
+        upload_file_path = add_exif_date_to_image(filename, creation_date, game_name)
+        print(f"📸 Processing image file: {filename}")
 
     # Debug: Show what dates we're reading
     print(
@@ -163,9 +181,6 @@ def upload_file_to_immich(
     print(f"📅 Extracted from filename: {creation_date}")
     print(f"📅 Sending to API - fileCreatedAt: {creation_date.isoformat()}")
     print(f"📅 Sending to API - fileModifiedAt: {file_modified_date.isoformat()}")
-
-    # Add EXIF data to the image
-    upload_file_path = add_exif_date_to_image(filename, creation_date)
 
     try:
         # Prepare form data with file

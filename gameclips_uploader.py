@@ -23,6 +23,72 @@ import steamstuff
 from transfer_handler import upload_video
 
 
+def get_exiftool_path() -> Optional[str]:
+    """Get the exiftool executable path from EXIFTOOL_PATH environment variable."""
+    exiftool_dir = os.getenv("EXIFTOOL_PATH")
+    if not exiftool_dir:
+        return None
+
+    # Try common exiftool executable names
+    possible_names = ["exiftool", "exiftool.exe"]
+    for name in possible_names:
+        exiftool_path = os.path.join(exiftool_dir, name)
+        if os.path.exists(exiftool_path) and os.access(exiftool_path, os.X_OK):
+            return exiftool_path
+
+    return None
+
+
+def add_camera_metadata_to_mp4(mp4_path: str) -> bool:
+    """Add camera and make metadata to MP4 file using exiftool.
+
+    Args:
+        mp4_path: Path to the MP4 file
+
+    Returns:
+        True if metadata was added successfully, False otherwise
+    """
+    exiftool_path = get_exiftool_path()
+    if not exiftool_path:
+        print("⚠️  Exiftool not found, skipping camera metadata addition")
+        return False
+
+    try:
+        # Use exiftool to add camera and make metadata
+        cmd = [
+            exiftool_path,
+            "-overwrite_original",
+            "-Make=Valve",
+            "-Model=Steam Deck",
+            "-CameraModelName=Steam Deck",
+            mp4_path,
+        ]
+
+        print(f"📷 Adding camera metadata to: {os.path.basename(mp4_path)}")
+        print(f"🔧 Exiftool command: {' '.join(cmd)}")
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,  # 1 minute timeout
+        )
+
+        if result.returncode == 0:
+            print("✅ Camera metadata added successfully")
+            return True
+        else:
+            print("❌ Failed to add camera metadata:")
+            print(f"   Return code: {result.returncode}")
+            print(f"   Stderr: {result.stderr}")
+            print(f"   Stdout: {result.stdout}")
+            return False
+
+    except Exception as e:
+        print(f"Error adding camera metadata: {e}")
+        return False
+
+
 def get_clips_directory() -> Optional[str]:
     """Get the Steam clips directory path."""
     try:
@@ -288,9 +354,9 @@ def convert_clip_to_mp4(
                         "-metadata",
                         f"date={creation_datetime.strftime('%Y-%m-%dT%H:%M:%S')}",
                         "-metadata",
-                        'make="Valve"',
+                        "make=Valve",
                         "-metadata",
-                        'model="Steam Deck"',
+                        "model=Steam Deck",
                     ]
                 )
 
@@ -299,11 +365,11 @@ def convert_clip_to_mp4(
                     cmd.extend(
                         [
                             "-metadata",
-                            f'title="{description}"',
+                            f"title={description}",
                             "-metadata",
-                            f'comment="{description}"',
+                            f"comment={description}",
                             "-metadata",
-                            f'description="{description}"',
+                            f"description={description}",
                         ]
                     )
 
@@ -337,6 +403,13 @@ def convert_clip_to_mp4(
             if result.returncode == 0 and os.path.exists(output_path):
                 output_size = os.path.getsize(output_path)
                 print(f"✅ Conversion successful: {output_path} ({output_size} bytes)")
+
+                # Add camera metadata using exiftool
+                if not add_camera_metadata_to_mp4(output_path):
+                    print(
+                        "⚠️  Camera metadata addition failed, but conversion was successful"
+                    )
+
                 return True
             else:
                 print("❌ FFmpeg conversion failed:")

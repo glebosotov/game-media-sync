@@ -116,7 +116,7 @@ def discover_clips() -> List[Dict]:
 
 
 def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
-    """Convert session.mpd to MP4 using FFmpeg.
+    """Convert session.mpd to MP4 by combining video and audio chunks.
 
     Args:
         session_mpd_path: Path to session.mpd file
@@ -126,65 +126,144 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
         True if conversion successful, False otherwise
     """
     try:
-        # First try: Use proper DASH/MPD handling with re-encoding
-        # This ensures all segments are properly combined
-        cmd = [
-            "ffmpeg",
-            "-i",
-            session_mpd_path,
-            "-c:v",
-            "libx264",  # Re-encode video to ensure compatibility
-            "-c:a",
-            "aac",  # Re-encode audio to ensure compatibility
-            "-movflags",
-            "+faststart",  # Optimize for streaming
-            "-y",  # Overwrite output file
-            output_path,
-        ]
+        # Get the directory containing the MPD file and chunks
+        mpd_dir = os.path.dirname(session_mpd_path)
 
-        print(f"Converting with command: {' '.join(cmd)}")
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=600,  # 10 minute timeout for re-encoding
-        )
+        # Find video and audio chunks
+        video_chunks = []
+        audio_chunks = []
 
-        if result.returncode == 0 and os.path.exists(output_path):
-            print(f"✅ Conversion successful: {output_path}")
-            return True
-        else:
-            print(f"❌ FFmpeg conversion failed (re-encode): {result.stderr}")
+        # Debug: Show all files in the directory
+        all_files = os.listdir(mpd_dir)
+        print(f"📂 Files in MPD directory: {all_files}")
 
-            # Fallback: Try copy mode if re-encoding fails
-            print("🔄 Trying fallback copy mode...")
-            cmd_fallback = [
-                "ffmpeg",
-                "-i",
-                session_mpd_path,
-                "-c",
-                "copy",
-                "-y",
-                output_path,
-            ]
+        # Look for init files and chunk files
+        for file in all_files:
+            if file.startswith("init-stream0.m4s"):
+                video_chunks.append(os.path.join(mpd_dir, file))
+            elif file.startswith("init-stream1.m4s"):
+                audio_chunks.append(os.path.join(mpd_dir, file))
+            elif file.startswith("chunk-stream0-") and file.endswith(".m4s"):
+                video_chunks.append(os.path.join(mpd_dir, file))
+            elif file.startswith("chunk-stream1-") and file.endswith(".m4s"):
+                audio_chunks.append(os.path.join(mpd_dir, file))
 
-            result_fallback = subprocess.run(
-                cmd_fallback,
+        # Sort chunks to ensure proper order
+        video_chunks.sort()
+        audio_chunks.sort()
+
+        print(f"📹 Found {len(video_chunks)} video chunks")
+        print(f"🔊 Found {len(audio_chunks)} audio chunks")
+
+        if not video_chunks:
+            print("❌ No video chunks found")
+            return False
+
+        # Create temporary files for combined streams
+        with tempfile.NamedTemporaryFile(
+            suffix="_video.mp4", delete=False
+        ) as temp_video:
+            temp_video_path = temp_video.name
+
+        with tempfile.NamedTemporaryFile(
+            suffix="_audio.mp4", delete=False
+        ) as temp_audio:
+            temp_audio_path = temp_audio.name
+
+        try:
+            # Combine video chunks
+            if video_chunks:
+                print("🔗 Combining video chunks...")
+                with open(temp_video_path, "wb") as outfile:
+                    for chunk in video_chunks:
+                        with open(chunk, "rb") as infile:
+                            outfile.write(infile.read())
+
+            # Combine audio chunks (if any)
+            if audio_chunks:
+                print("🔗 Combining audio chunks...")
+                with open(temp_audio_path, "wb") as outfile:
+                    for chunk in audio_chunks:
+                        with open(chunk, "rb") as infile:
+                            outfile.write(infile.read())
+
+            # Use FFmpeg to combine video and audio streams
+            if audio_chunks:
+                # Both video and audio
+                cmd = [
+                    "ffmpeg",
+                    "-i",
+                    temp_video_path,
+                    "-i",
+                    temp_audio_path,
+                    "-c",
+                    "copy",
+                    "-y",  # Overwrite output file
+                    output_path,
+                ]
+            else:
+                # Video only
+                cmd = [
+                    "ffmpeg",
+                    "-i",
+                    temp_video_path,
+                    "-c",
+                    "copy",
+                    "-y",  # Overwrite output file
+                    output_path,
+                ]
+
+            print(f"🎬 Final FFmpeg command: {' '.join(cmd)}")
+            result = subprocess.run(
+                cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=300,  # 5 minute timeout
             )
 
-            if result_fallback.returncode == 0 and os.path.exists(output_path):
-                print(f"✅ Fallback conversion successful: {output_path}")
+            if result.returncode == 0 and os.path.exists(output_path):
+                print(f"✅ Conversion successful: {output_path}")
                 return True
             else:
-                print(f"❌ Fallback conversion also failed: {result_fallback.stderr}")
-                return False
+                print(f"❌ FFmpeg conversion failed: {result.stderr}")
 
-    except subprocess.TimeoutExpired:
-        print("FFmpeg conversion timed out")
-        return False
+                # Fallback: Try original MPD approach
+                print("🔄 Trying fallback MPD approach...")
+                cmd_fallback = [
+                    "ffmpeg",
+                    "-i",
+                    session_mpd_path,
+                    "-c",
+                    "copy",
+                    "-y",
+                    output_path,
+                ]
+
+                result_fallback = subprocess.run(
+                    cmd_fallback,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+
+                if result_fallback.returncode == 0 and os.path.exists(output_path):
+                    print(f"✅ Fallback conversion successful: {output_path}")
+                    return True
+                else:
+                    print(
+                        f"❌ Fallback conversion also failed: {result_fallback.stderr}"
+                    )
+                    return False
+
+        finally:
+            # Clean up temporary files
+            try:
+                os.unlink(temp_video_path)
+                if audio_chunks:
+                    os.unlink(temp_audio_path)
+            except Exception:
+                pass
+
     except Exception as e:
         print(f"Error converting clip: {e}")
         return False

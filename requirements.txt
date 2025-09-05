@@ -1,7 +1,6 @@
 certifi==2025.8.3
 charset-normalizer==3.4.3
 idna==3.10
-mutagen==1.47.0
 pillow==11.3.0
 python-dotenv==1.1.1
 requests==2.32.5

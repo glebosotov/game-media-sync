@@ -14,13 +14,10 @@ Process:
 import json
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional
-
-from mutagen.mp4 import MP4
 
 import steamstuff
 from transfer_handler import upload_video
@@ -118,7 +115,12 @@ def discover_clips() -> List[Dict]:
     return clips
 
 
-def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
+def convert_clip_to_mp4(
+    session_mpd_path: str,
+    output_path: str,
+    creation_datetime: datetime = None,
+    game_name: str = None,
+) -> bool:
     """Convert session.mpd to MP4 by combining video and audio chunks.
 
     Based on the approach from: https://gist.githubusercontent.com/safijari/afa41cb017eb2d0cadb20bf9fcfecc93/raw/ebfe2e14265d51cecfbca5bb34cb28e518936fa6/convert_valve_video.py
@@ -261,7 +263,6 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
                     "100M",
                     "-probesize",
                     "50M",
-                    output_path,
                 ]
             else:
                 # Video only - using reference approach
@@ -276,8 +277,38 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
                     "100M",
                     "-probesize",
                     "50M",
-                    output_path,
                 ]
+
+            # Add metadata if provided
+            if creation_datetime:
+                cmd.extend(
+                    [
+                        "-metadata",
+                        f"creation_time={creation_datetime.strftime('%Y-%m-%dT%H:%M:%S')}",
+                        "-metadata",
+                        f"date={creation_datetime.strftime('%Y-%m-%dT%H:%M:%S')}",
+                        "-metadata",
+                        "make=Valve",
+                        "-metadata",
+                        "model=Steam Deck",
+                    ]
+                )
+
+                if game_name:
+                    description = game_name
+                    cmd.extend(
+                        [
+                            "-metadata",
+                            f"title={description}",
+                            "-metadata",
+                            f"comment={description}",
+                            "-metadata",
+                            f"description={description}",
+                        ]
+                    )
+
+            # Add output path
+            cmd.append(output_path)
 
             print(f"🎬 Final FFmpeg command: {' '.join(cmd)}")
 
@@ -328,31 +359,6 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
         return False
 
 
-def update_mp4_metadata(source_path: str, dest_path: str, dt_object: datetime) -> bool:
-    """Copies an MP4 and updates metadata in the destination file."""
-    try:
-        shutil.copy2(source_path, dest_path)
-        video = MP4(dest_path)
-        video["\xa9day"] = [dt_object.strftime("%Y-%m-%dT%H:%M:%SZ")]
-        video.save()
-        print(f"Processed MP4: {os.path.basename(dest_path)}")
-        return True
-    except Exception as e:
-        print(f"Error processing MP4 {os.path.basename(source_path)}: {e}")
-        return False
-
-
-def update_file_system_timestamp(file_path: str, dt_object: datetime) -> None:
-    """Updates the file system's 'created' and 'modified' times for the new file."""
-    try:
-        timestamp = dt_object.timestamp()
-        os.utime(file_path, (timestamp, timestamp))
-    except Exception as e:
-        print(
-            f"Could not update file system timestamp for {os.path.basename(file_path)}: {e}"
-        )
-
-
 def upload_clip_to_immich(clip_info: Dict, game_name: Optional[str] = None) -> bool:
     """Upload a converted game clip to Immich.
 
@@ -389,21 +395,17 @@ def upload_clip_to_immich(clip_info: Dict, game_name: Optional[str] = None) -> b
             except Exception:
                 pass
 
-        if not convert_clip_to_mp4(clip_info["session_mpd"], temp_mp4_path):
-            return False
-
-        # Set proper timestamps and metadata using the extracted creation time from folder name
+        # Convert MPD to MP4 with metadata and timestamps
         creation_datetime = datetime.fromtimestamp(clip_info["creation_time"])
 
-        # Create a new file with proper MP4 metadata
-        final_mp4_path = temp_mp4_path.replace(".mp4", "_final.mp4")
+        if not convert_clip_to_mp4(
+            clip_info["session_mpd"], temp_mp4_path, creation_datetime, game_name
+        ):
+            return False
 
-        # Update MP4 metadata with creation date
-        update_mp4_metadata(temp_mp4_path, final_mp4_path, creation_datetime)
-        # Also set file system timestamps
-        update_file_system_timestamp(final_mp4_path, creation_datetime)
-        # Use the final file for upload
-        temp_mp4_path = final_mp4_path
+        # Set file system timestamps
+        timestamp = creation_datetime.timestamp()
+        os.utime(temp_mp4_path, (timestamp, timestamp))
 
         # Upload to Immich using regular video upload function
         # The file timestamps are now set correctly, so Immich will read the right date

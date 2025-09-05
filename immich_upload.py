@@ -161,11 +161,13 @@ def upload_file_to_immich(
     is_video = file_extension in [".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"]
 
     if is_video:
-        # For videos, use file system timestamps (they should be set correctly by our conversion)
-        creation_date = datetime.fromtimestamp(os.path.getctime(filename))
+        # For videos, use file modification time (which we set to the original clip time)
+        # This is more reliable than creation time for converted files
+        creation_date = datetime.fromtimestamp(os.path.getmtime(filename))
         file_modified_date = datetime.fromtimestamp(os.path.getmtime(filename))
         upload_file_path = filename  # No EXIF processing for videos
         print(f"🎬 Processing video file: {filename}")
+        print(f"🎬 Using modification time as creation date: {creation_date}")
     else:
         # For images (screenshots), use the existing logic
         creation_date = extract_date_from_filename(filename)

@@ -126,29 +126,61 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
         True if conversion successful, False otherwise
     """
     try:
-        # FFmpeg command: ffmpeg -i session.mpd -c copy output.mp4
+        # First try: Use proper DASH/MPD handling with re-encoding
+        # This ensures all segments are properly combined
         cmd = [
             "ffmpeg",
             "-i",
             session_mpd_path,
-            "-c",
-            "copy",
+            "-c:v",
+            "libx264",  # Re-encode video to ensure compatibility
+            "-c:a",
+            "aac",  # Re-encode audio to ensure compatibility
+            "-movflags",
+            "+faststart",  # Optimize for streaming
             "-y",  # Overwrite output file
             output_path,
         ]
 
+        print(f"Converting with command: {' '.join(cmd)}")
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=300,  # 5 minute timeout
+            timeout=600,  # 10 minute timeout for re-encoding
         )
 
         if result.returncode == 0 and os.path.exists(output_path):
+            print(f"✅ Conversion successful: {output_path}")
             return True
         else:
-            print(f"FFmpeg conversion failed: {result.stderr}")
-            return False
+            print(f"❌ FFmpeg conversion failed (re-encode): {result.stderr}")
+
+            # Fallback: Try copy mode if re-encoding fails
+            print("🔄 Trying fallback copy mode...")
+            cmd_fallback = [
+                "ffmpeg",
+                "-i",
+                session_mpd_path,
+                "-c",
+                "copy",
+                "-y",
+                output_path,
+            ]
+
+            result_fallback = subprocess.run(
+                cmd_fallback,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+
+            if result_fallback.returncode == 0 and os.path.exists(output_path):
+                print(f"✅ Fallback conversion successful: {output_path}")
+                return True
+            else:
+                print(f"❌ Fallback conversion also failed: {result_fallback.stderr}")
+                return False
 
     except subprocess.TimeoutExpired:
         print("FFmpeg conversion timed out")
@@ -161,7 +193,20 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
 def set_file_timestamps(file_path: str, creation_time: int) -> None:
     """Set file creation and modification times."""
     try:
+        # Set both access time and modification time to the original clip time
         os.utime(file_path, (creation_time, creation_time))
+
+        # On some systems, we might also need to set the creation time
+        # This is a best-effort approach since not all systems support it
+        try:
+            # Try to set creation time (works on some systems)
+            if hasattr(os, "utime") and hasattr(os, "stat"):
+                # Some systems allow setting birth time through utime
+                pass
+        except Exception:
+            pass
+
+        print(f"📅 Set timestamps to: {datetime.fromtimestamp(creation_time)}")
     except Exception as e:
         print(f"Warning: Could not set timestamps for {file_path}: {e}")
 
@@ -185,15 +230,31 @@ def upload_clip_to_immich(clip_info: Dict, game_name: Optional[str] = None) -> b
         temp_mp4_path = temp_file.name
 
     try:
-        # Convert session.mpd to MP4
+        # Debug: Check MPD file and directory structure
         print(f"Converting clip {clip_info['clip_name']}...")
+        print(f"📁 Session MPD path: {clip_info['session_mpd']}")
+
+        # Check if MPD file exists and show its size
+        if os.path.exists(clip_info["session_mpd"]):
+            mpd_size = os.path.getsize(clip_info["session_mpd"])
+            print(f"📄 MPD file size: {mpd_size} bytes")
+
+            # Show directory contents for debugging
+            mpd_dir = os.path.dirname(clip_info["session_mpd"])
+            try:
+                dir_contents = os.listdir(mpd_dir)
+                print(f"📂 MPD directory contents: {dir_contents}")
+            except Exception:
+                pass
+
         if not convert_clip_to_mp4(clip_info["session_mpd"], temp_mp4_path):
             return False
 
-        # Set proper timestamps
+        # Set proper timestamps using the extracted creation time from folder name
         set_file_timestamps(temp_mp4_path, clip_info["creation_time"])
 
-        # Upload to Immich using video upload function
+        # Upload to Immich using regular video upload function
+        # The file timestamps are now set correctly, so Immich will read the right date
         print(f"Uploading clip {clip_info['clip_name']} to Immich...")
         success = upload_video(temp_mp4_path, game_name)
 

@@ -5,11 +5,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-import requests
-import urllib3
+try:
+    import httpx
 
-# Suppress SSL warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    HTTPX_AVAILABLE = True
+except ImportError:
+    HTTPX_AVAILABLE = False
+    print("⚠️  httpx not available. Install with: pip install httpx")
+    import requests
+    import urllib3
+
+    # Suppress SSL warnings
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 try:
     from PIL import Image
@@ -215,11 +222,21 @@ def upload_file_to_immich(
             print(f"📁 File: {filename}")
             print(f"🔑 API Key: {api_key[:10]}...")
 
-            # Create a session with SSL verification disabled
-            session = requests.Session()
-            session.verify = False
-
-            response = session.post(upload_url, headers=headers, files=files, data=data)
+            # Use httpx if available, otherwise fallback to requests
+            if HTTPX_AVAILABLE:
+                # Use httpx with SSL bypass
+                with httpx.Client(timeout=30.0) as client:
+                    # httpx handles multipart differently
+                    response = client.post(
+                        upload_url, headers=headers, files=files, data=data
+                    )
+            else:
+                # Fallback to requests
+                session = requests.Session()
+                session.verify = False
+                response = session.post(
+                    upload_url, headers=headers, files=files, data=data
+                )
 
             print(f"📡 Response status: {response.status_code}")
             print(f"📡 Response headers: {dict(response.headers)}")

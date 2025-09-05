@@ -89,6 +89,8 @@ def add_exif_date_to_image(
             img_exif[Base.DateTimeDigitized] = date_string
             img_exif[Base.DateTime] = date_string
             img_exif[Base.ImageDescription] = game_name
+            img_exif[Base.Make] = "Valve"
+            img_exif[Base.Model] = "Steam Deck"
 
             # Create a temporary file path without replacing leading dot in directories
 

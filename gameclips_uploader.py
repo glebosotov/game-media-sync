@@ -288,9 +288,9 @@ def convert_clip_to_mp4(
                         "-metadata",
                         f"date={creation_datetime.strftime('%Y-%m-%dT%H:%M:%S')}",
                         "-metadata",
-                        "make=Valve",
+                        'make="Valve"',
                         "-metadata",
-                        "model=Steam Deck",
+                        'model="Steam Deck"',
                     ]
                 )
 
@@ -299,11 +299,11 @@ def convert_clip_to_mp4(
                     cmd.extend(
                         [
                             "-metadata",
-                            f"title={description}",
+                            f'title="{description}"',
                             "-metadata",
-                            f"comment={description}",
+                            f'comment="{description}"',
                             "-metadata",
-                            f"description={description}",
+                            f'description="{description}"',
                         ]
                     )
 

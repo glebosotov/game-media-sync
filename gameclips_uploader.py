@@ -118,6 +118,8 @@ def discover_clips() -> List[Dict]:
 def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
     """Convert session.mpd to MP4 by combining video and audio chunks.
 
+    Based on the approach from: https://gist.githubusercontent.com/safijari/afa41cb017eb2d0cadb20bf9fcfecc93/raw/ebfe2e14265d51cecfbca5bb34cb28e518936fa6/convert_valve_video.py
+
     Args:
         session_mpd_path: Path to session.mpd file
         output_path: Path for output MP4 file
@@ -187,29 +189,37 @@ def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
                         with open(chunk, "rb") as infile:
                             outfile.write(infile.read())
 
-            # Use FFmpeg to combine video and audio streams
+            # Use FFmpeg to combine video and audio streams (based on reference)
             if audio_chunks:
-                # Both video and audio
+                # Both video and audio - using reference approach
                 cmd = [
                     "ffmpeg",
+                    "-y",
                     "-i",
                     temp_video_path,
                     "-i",
                     temp_audio_path,
                     "-c",
                     "copy",
-                    "-y",  # Overwrite output file
+                    "-analyzeduration",
+                    "100M",
+                    "-probesize",
+                    "50M",
                     output_path,
                 ]
             else:
-                # Video only
+                # Video only - using reference approach
                 cmd = [
                     "ffmpeg",
+                    "-y",
                     "-i",
                     temp_video_path,
                     "-c",
                     "copy",
-                    "-y",  # Overwrite output file
+                    "-analyzeduration",
+                    "100M",
+                    "-probesize",
+                    "50M",
                     output_path,
                 ]
 

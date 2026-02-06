@@ -1,20 +1,37 @@
 # game-media-sync
 
-Sync screenshots and clips from **Steam**, **PS5**, and **Nintendo Switch** to [Immich](https://immich.app/).
+Sync screenshots and clips from **Steam**, **PS5**, and **Nintendo Switch 2** to [Immich](https://immich.app/).
 
 ## Setup
 
 ```bash
-cp .env.example .env   # fill in IMMICH_SERVER_URL and IMMICH_API_KEY
+cp .env.example .env   # fill in values
 uv sync
 ```
 
 ## Usage
 
 ```bash
-uv run python scripts/upload_steam.py
-uv run python scripts/upload_ps5.py
-uv run python scripts/upload_switch.py [path]
+# Steam screenshots
+gms steam
+
+# Steam game clips
+gms steam-clips
+
+# PS5 — embed metadata and copy to output folder
+gms ps5 --source /path/to/ps5 --output /path/to/output
+
+# Nintendo Switch 2
+gms switch /path/to/switch/media
 ```
 
-Paths can be configured via `.env` or passed as CLI arguments.
+All paths can also be set via environment variables in `.env`:
+
+| Variable | Description |
+| --- | --- |
+| `IMMICH_SERVER_URL` | Immich server URL |
+| `IMMICH_API_KEY` | Immich API key |
+| `PS5_SOURCE_PATH` | PS5 source folder |
+| `PS5_OUTPUT_PATH` | PS5 output folder |
+| `SWITCH2_SOURCE_PATH` | Switch 2 source folder |
+| `EXIFTOOL_PATH` | Custom exiftool path (optional) |

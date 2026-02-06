@@ -1,5 +1,1 @@
-"""Utility modules"""
-
-from . import vdf
-
-__all__ = ["vdf"]
+"""Utility modules."""

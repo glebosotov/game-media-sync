@@ -1,15 +1,13 @@
 [project]
 name = "game-media-sync"
-version = "0.1.0"
-description = "Project for syncing Steam, PS5, and Nintendo Switch media to Immich"
+version = "0.2.0"
+description = "Sync Steam, PS5, and Nintendo Switch media to Immich"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["requests>=2.32.0", "python-dotenv>=1.0.0"]
+dependencies = ["requests>=2.32.0", "python-dotenv>=1.0.0", "vdf>=3.4"]
 
 [project.scripts]
-upload-steam = "game_media_sync.platforms.steam.uploader:main"
-upload-ps5 = "game_media_sync.platforms.ps5.processor:process_files_in_folder"
-upload-switch = "game_media_sync.platforms.switch.uploader:process_switch2_folder"
+gms = "game_media_sync.cli:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

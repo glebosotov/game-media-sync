@@ -3,18 +3,15 @@
 
 import sys
 
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-except ImportError:
-    pass
+from dotenv import load_dotenv
 
 from game_media_sync.platforms.ps5.processor import process_files_in_folder
 
 if __name__ == "__main__":
     import os
     from pathlib import Path
+
+    load_dotenv()
 
     source_folder_path = os.getenv("PS5_SOURCE_PATH", "")
     output_folder_path = os.getenv("PS5_OUTPUT_PATH", "")

@@ -19,11 +19,7 @@ def GetSteamId():
     users = d["users"]
     for id64 in users:
         if users[id64]["MostRecent"] == "1":
-            user = int(id64)
-            print("MostRecent: {0}".format(users[str(user)]["PersonaName"]))
-            print("SteamID: {0}".format(user))
-            print("AccountID: {0}".format(user & 0xFFFFFFFF))
-            return user
+            return int(id64)
 
 
 def GetAccountId():

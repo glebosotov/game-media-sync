@@ -80,9 +80,7 @@ def _try_steamdb(app_id: int, timeout: float = 5.0) -> Optional[str]:
         )
         if m:
             try:
-                import json as _json
-
-                data = _json.loads(m.group(1))
+                data = json.loads(m.group(1))
                 if isinstance(data, dict) and isinstance(data.get("name"), str):
                     cleaned = _clean_candidate(data["name"])
                     if cleaned:
@@ -232,7 +230,7 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) != 2:
-        print("Usage: game_name_resolver.py <app_id>")
+        print("Usage: python -m game_media_sync.resolvers.game_name <app_id>")
         sys.exit(1)
     try:
         app_id = int(sys.argv[1])

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Project for syncing Steam, PS5, and Nintendo Switch media to Immich"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["requests>=2.32.0", "pillow>=11.0.0", "python-dotenv>=1.0.0"]
+dependencies = ["requests>=2.32.0", "python-dotenv>=1.0.0"]
 
 [project.scripts]
 upload-steam = "game_media_sync.platforms.steam.uploader:main"

@@ -9,18 +9,14 @@ import os
 import sys
 from datetime import datetime
 
-from ...core.transfer import upload_screenshot
+from ...core.upload import upload_screenshot
 from ...resolvers.game_name import get_game_name
 from ...utils import vdf
 from .utils import GetAccountId, steamdir
 
-try:
-    from dotenv import load_dotenv
+from dotenv import load_dotenv
 
-    load_dotenv()
-except ImportError:
-    print("⚠️  python-dotenv not available. Install with: pip install python-dotenv")
-    print("   Environment variables must be set manually.")
+load_dotenv()
 
 # Configuration
 TRACKING_FILE = "upload_tracker.json"
@@ -106,58 +102,40 @@ def main():
         upload_clips_main()
         return
 
-    print("Steam Screenshot Upload Script")
-    print("=" * 40)
-
     if not os.getenv("IMMICH_API_KEY") or not os.getenv("IMMICH_SERVER_URL"):
-        print("❌ Immich credentials not configured!")
-        print("Please set IMMICH_API_KEY and IMMICH_SERVER_URL environment variables")
+        print("Error: Immich credentials not configured")
         return
 
     tracker = load_upload_tracker()
     last_upload_time = tracker.get("last_upload_time", 0)
     uploaded_screenshots = tracker.get("uploaded_screenshots", [])
 
-    print(
-        f"Last upload time: {datetime.fromtimestamp(last_upload_time) if last_upload_time > 0 else 'Never'}"
-    )
-
-    print("Scanning Steam screenshots...")
     all_screenshots = get_all_screenshots()
 
     if not all_screenshots:
         print("No screenshots found")
         return
 
-    print(f"Total screenshots found: {len(all_screenshots)}")
-
     new_screenshots = get_new_screenshots(all_screenshots, last_upload_time)
 
     if not new_screenshots:
-        print("✅ No new screenshots to upload")
+        print("No new screenshots to upload")
         return
 
-    print(f"New screenshots to upload: {len(new_screenshots)}")
+    print(f"Processing {len(new_screenshots)} new screenshot(s)...")
 
     successful_uploads = 0
     failed_uploads = 0
 
     for screenshot in new_screenshots:
-        print(f"\n📸 Uploading: {screenshot['filename']}")
-        print(f"   Game ID: {screenshot['game_id']}")
-        print(f"   Created: {datetime.fromtimestamp(screenshot['creation_time'])}")
-
-        # Check if file exists
         if not os.path.exists(screenshot["full_path"]):
-            print(f"   ❌ File not found: {screenshot['full_path']}")
+            print(f"  File not found: {screenshot['full_path']}")
             failed_uploads += 1
             continue
 
         game_name = get_game_name(screenshot["game_id"])
-        print(f"   Game Name: {game_name}")
 
         if upload_screenshot(screenshot["full_path"], game_name):
-            print("   ✅ Upload successful")
             successful_uploads += 1
             uploaded_screenshots.append(
                 {
@@ -167,7 +145,7 @@ def main():
                 }
             )
         else:
-            print("   ❌ Upload failed")
+            print(f"  Failed: {screenshot['filename']}")
             failed_uploads += 1
 
     if successful_uploads > 0:
@@ -176,40 +154,25 @@ def main():
         tracker["uploaded_screenshots"] = uploaded_screenshots
         save_upload_tracker(tracker)
 
-    print("\n" + "=" * 40)
-    print("Upload Summary:")
-    print(f"✅ Successful: {successful_uploads}")
-    print(f"❌ Failed: {failed_uploads}")
-    print(f"📊 Total processed: {len(new_screenshots)}")
-
-    if successful_uploads > 0:
-        print(
-            f"🕒 Last upload time updated to: {datetime.fromtimestamp(tracker['last_upload_time'])}"
-        )
+    print(
+        f"Screenshots: {successful_uploads} uploaded, {failed_uploads} failed out of {len(new_screenshots)}"
+    )
 
 
 if __name__ == "__main__":
+    load_dotenv()
+
     if len(sys.argv) > 1 and sys.argv[1] in ["--help", "-h"]:
-        print("Steam Screenshot Upload Script")
         print("Usage:")
-        print("  python upload_screenshots.py           # Upload screenshots only")
-        print("  python upload_screenshots.py --clips   # Upload clips only")
-        print(
-            "  python upload_screenshots.py --both    # Upload both screenshots and clips"
-        )
-        print("  python upload_screenshots.py --help    # Show this help")
+        print("  python -m scripts.upload_steam           # Upload screenshots only")
+        print("  python -m scripts.upload_steam --clips   # Upload clips only")
+        print("  python -m scripts.upload_steam --both    # Upload both")
+        print("  python -m scripts.upload_steam --help    # Show this help")
         sys.exit(0)
 
     if "--both" in sys.argv:
-        print("Uploading both screenshots and clips...")
-        print("=" * 50)
-
-        print("\n📸 UPLOADING SCREENSHOTS")
-        print("-" * 30)
         main()
 
-        print("\n🎬 UPLOADING CLIPS")
-        print("-" * 30)
         from .clips import main as upload_clips_main
 
         upload_clips_main()

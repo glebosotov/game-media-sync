@@ -6,8 +6,8 @@ Handles discovery, conversion, and upload of Steam game clips to Immich.
 Process:
 1. Scan gamerecordings/clips/ for clip_{gameid}_{date}_{time} directories
 2. Find session.mpd files in video subdirectories
-3. Convert to MP4 using FFmpeg
-4. Set proper timestamps and metadata
+3. Convert to MP4 using FFmpeg (raw, no metadata)
+4. Embed metadata in a single pass via core.metadata
 5. Upload to Immich with game info
 """
 
@@ -19,72 +19,14 @@ import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from ...core.transfer import upload_video
+from ...core.metadata import (
+    STEAM_DECK,
+    MediaMetadata,
+    set_file_timestamps,
+    set_video_metadata,
+)
+from ...core.upload import upload_video
 from .utils import GetAccountId, steamdir
-
-
-def get_exiftool_path() -> Optional[str]:
-    """Get the exiftool executable path from EXIFTOOL_PATH environment variable."""
-    exiftool_dir = os.getenv("EXIFTOOL_PATH")
-    if not exiftool_dir:
-        return None
-
-    possible_names = ["exiftool", "exiftool.exe"]
-    for name in possible_names:
-        exiftool_path = os.path.join(exiftool_dir, name)
-        if os.path.exists(exiftool_path) and os.access(exiftool_path, os.X_OK):
-            return exiftool_path
-
-    return None
-
-
-def add_camera_metadata_to_mp4(mp4_path: str) -> bool:
-    """Add camera and make metadata to MP4 file using exiftool.
-
-    Args:
-        mp4_path: Path to the MP4 file
-
-    Returns:
-        True if metadata was added successfully, False otherwise
-    """
-    exiftool_path = get_exiftool_path()
-    if not exiftool_path:
-        print("⚠️  Exiftool not found, skipping camera metadata addition")
-        return False
-
-    try:
-        cmd = [
-            exiftool_path,
-            "-overwrite_original",
-            "-Make=Valve",
-            "-Model=Steam Deck",
-            "-CameraModelName=Steam Deck",
-            mp4_path,
-        ]
-
-        print(f"📷 Adding camera metadata to: {os.path.basename(mp4_path)}")
-        print(f"🔧 Exiftool command: {' '.join(cmd)}")
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=60,  # 1 minute timeout
-        )
-
-        if result.returncode == 0:
-            print("✅ Camera metadata added successfully")
-            return True
-        else:
-            print("❌ Failed to add camera metadata:")
-            print(f"   Return code: {result.returncode}")
-            print(f"   Stderr: {result.stderr}")
-            print(f"   Stdout: {result.stdout}")
-            return False
-
-    except Exception as e:
-        print(f"Error adding camera metadata: {e}")
-        return False
 
 
 def get_clips_directory() -> Optional[str]:
@@ -180,12 +122,14 @@ def discover_clips() -> List[Dict]:
 def convert_clip_to_mp4(
     session_mpd_path: str,
     output_path: str,
-    creation_datetime: datetime = None,
-    game_name: str = None,
 ) -> bool:
-    """Convert session.mpd to MP4 by combining video and audio chunks.
+    """Convert session.mpd to a raw MP4 by combining DASH video and audio chunks.
 
-    Based on the approach from: https://gist.githubusercontent.com/safijari/afa41cb017eb2d0cadb20bf9fcfecc93/raw/ebfe2e14265d51cecfbca5bb34cb28e518936fa6/convert_valve_video.py
+    This performs *only* the container conversion.  No metadata is embedded here;
+    that is handled separately by :func:`set_video_metadata`.
+
+    Based on the approach from:
+    https://gist.github.com/safijari/afa41cb017eb2d0cadb20bf9fcfecc93
 
     Args:
         session_mpd_path: Path to session.mpd file
@@ -198,11 +142,7 @@ def convert_clip_to_mp4(
         # Get the directory containing the MPD file and chunks
         mpd_dir = os.path.dirname(session_mpd_path)
 
-        video_chunks = []
-        audio_chunks = []
-
         all_files = os.listdir(mpd_dir)
-        print(f"📂 Files in MPD directory: {all_files}")
 
         video_init = None
         audio_init = None
@@ -222,8 +162,8 @@ def convert_clip_to_mp4(
         video_chunk_files.sort()
         audio_chunk_files.sort()
 
-        video_chunks = []
-        audio_chunks = []
+        video_chunks: list[str] = []
+        audio_chunks: list[str] = []
 
         if video_init:
             video_chunks.append(video_init)
@@ -233,11 +173,8 @@ def convert_clip_to_mp4(
             audio_chunks.append(audio_init)
         audio_chunks.extend(audio_chunk_files)
 
-        print(f"📹 Found {len(video_chunks)} video chunks")
-        print(f"🔊 Found {len(audio_chunks)} audio chunks")
-
         if not video_chunks:
-            print("❌ No video chunks found")
+            print("Error: No video chunks found")
             return False
 
         with tempfile.NamedTemporaryFile(
@@ -251,54 +188,30 @@ def convert_clip_to_mp4(
             temp_audio_path = temp_audio.name
 
         try:
-            if video_chunks:
-                print("🔗 Combining video chunks...")
-                print(f"📹 Video chunks: {[os.path.basename(f) for f in video_chunks]}")
-                with open(temp_video_path, "wb") as outfile:
-                    for chunk in video_chunks:
-                        if os.path.exists(chunk):
-                            with open(chunk, "rb") as infile:
-                                data = infile.read()
-                                outfile.write(data)
-                                print(
-                                    f"  ✅ Added {os.path.basename(chunk)} ({len(data)} bytes)"
-                                )
-                        else:
-                            print(f"  ❌ Missing chunk: {chunk}")
+            # --- Combine video chunks ---
+            with open(temp_video_path, "wb") as outfile:
+                for chunk in video_chunks:
+                    if os.path.exists(chunk):
+                        with open(chunk, "rb") as infile:
+                            outfile.write(infile.read())
 
-                if os.path.exists(temp_video_path):
-                    video_size = os.path.getsize(temp_video_path)
-                    print(
-                        f"📹 Combined video file: {temp_video_path} ({video_size} bytes)"
-                    )
-                else:
-                    print("❌ Failed to create combined video file")
-                    return False
+            if not os.path.exists(temp_video_path):
+                print("Error: Failed to create combined video file")
+                return False
 
+            # --- Combine audio chunks ---
             if audio_chunks:
-                print("🔗 Combining audio chunks...")
-                print(f"🔊 Audio chunks: {[os.path.basename(f) for f in audio_chunks]}")
                 with open(temp_audio_path, "wb") as outfile:
                     for chunk in audio_chunks:
                         if os.path.exists(chunk):
                             with open(chunk, "rb") as infile:
-                                data = infile.read()
-                                outfile.write(data)
-                                print(
-                                    f"  ✅ Added {os.path.basename(chunk)} ({len(data)} bytes)"
-                                )
-                        else:
-                            print(f"  ❌ Missing chunk: {chunk}")
+                                outfile.write(infile.read())
 
-                if os.path.exists(temp_audio_path):
-                    audio_size = os.path.getsize(temp_audio_path)
-                    print(
-                        f"🔊 Combined audio file: {temp_audio_path} ({audio_size} bytes)"
-                    )
-                else:
-                    print("❌ Failed to create combined audio file")
+                if not os.path.exists(temp_audio_path):
+                    print("Error: Failed to create combined audio file")
                     return False
 
+            # --- FFmpeg mux (raw, no metadata) ---
             if audio_chunks:
                 cmd = [
                     "ffmpeg",
@@ -313,6 +226,7 @@ def convert_clip_to_mp4(
                     "100M",
                     "-probesize",
                     "50M",
+                    output_path,
                 ]
             else:
                 cmd = [
@@ -326,52 +240,8 @@ def convert_clip_to_mp4(
                     "100M",
                     "-probesize",
                     "50M",
+                    output_path,
                 ]
-
-            if creation_datetime:
-                cmd.extend(
-                    [
-                        "-metadata",
-                        f"creation_time={creation_datetime.strftime('%Y-%m-%dT%H:%M:%S')}",
-                        "-metadata",
-                        f"date={creation_datetime.strftime('%Y-%m-%dT%H:%M:%S')}",
-                        "-metadata",
-                        "make=Valve",
-                        "-metadata",
-                        "model=Steam Deck",
-                    ]
-                )
-
-                if game_name:
-                    description = game_name
-                    cmd.extend(
-                        [
-                            "-metadata",
-                            f"title={description}",
-                            "-metadata",
-                            f"comment={description}",
-                            "-metadata",
-                            f"description={description}",
-                        ]
-                    )
-
-            cmd.append(output_path)
-
-            print(f"🎬 Final FFmpeg command: {' '.join(cmd)}")
-
-            if os.path.exists(temp_video_path):
-                video_size = os.path.getsize(temp_video_path)
-                print(f"📹 Input video file: {temp_video_path} ({video_size} bytes)")
-            else:
-                print(f"❌ Input video file missing: {temp_video_path}")
-                return False
-
-            if audio_chunks and os.path.exists(temp_audio_path):
-                audio_size = os.path.getsize(temp_audio_path)
-                print(f"🔊 Input audio file: {temp_audio_path} ({audio_size} bytes)")
-            elif audio_chunks:
-                print(f"❌ Input audio file missing: {temp_audio_path}")
-                return False
 
             result = subprocess.run(
                 cmd,
@@ -381,20 +251,11 @@ def convert_clip_to_mp4(
             )
 
             if result.returncode == 0 and os.path.exists(output_path):
-                output_size = os.path.getsize(output_path)
-                print(f"✅ Conversion successful: {output_path} ({output_size} bytes)")
-
-                if not add_camera_metadata_to_mp4(output_path):
-                    print(
-                        "⚠️  Camera metadata addition failed, but conversion was successful"
-                    )
-
                 return True
             else:
-                print("❌ FFmpeg conversion failed:")
-                print(f"   Return code: {result.returncode}")
-                print(f"   Stderr: {result.stderr}")
-                print(f"   Stdout: {result.stdout}")
+                print(
+                    f"Error: FFmpeg conversion failed (code {result.returncode}): {result.stderr.strip()}"
+                )
                 return False
 
         finally:
@@ -413,6 +274,12 @@ def convert_clip_to_mp4(
 def upload_clip_to_immich(clip_info: Dict, game_name: Optional[str] = None) -> bool:
     """Upload a converted game clip to Immich.
 
+    Flow:
+      1. Convert DASH segments → raw MP4 (no metadata).
+      2. Embed all metadata (dates, camera, game name) via exiftool in one pass.
+      3. Set filesystem timestamps.
+      4. Upload the final file.
+
     Args:
         clip_info: Clip information dictionary
         game_name: Optional game name for metadata
@@ -424,54 +291,44 @@ def upload_clip_to_immich(clip_info: Dict, game_name: Optional[str] = None) -> b
         print(f"No session.mpd found for clip {clip_info['clip_name']}")
         return False
 
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_file:
-        temp_mp4_path = temp_file.name
+    # Two temp files: raw conversion output, and the tagged final file
+    with tempfile.NamedTemporaryFile(suffix="_raw.mp4", delete=False) as f:
+        temp_raw_path = f.name
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+        temp_final_path = f.name
 
     try:
-        print(f"Converting clip {clip_info['clip_name']}...")
-        print(f"📁 Session MPD path: {clip_info['session_mpd']}")
-
-        if os.path.exists(clip_info["session_mpd"]):
-            mpd_size = os.path.getsize(clip_info["session_mpd"])
-            print(f"📄 MPD file size: {mpd_size} bytes")
-
-            mpd_dir = os.path.dirname(clip_info["session_mpd"])
-            try:
-                dir_contents = os.listdir(mpd_dir)
-                print(f"📂 MPD directory contents: {dir_contents}")
-            except Exception:
-                pass
-
-        creation_datetime = datetime.fromtimestamp(clip_info["creation_time"])
-
-        if not convert_clip_to_mp4(
-            clip_info["session_mpd"], temp_mp4_path, creation_datetime, game_name
-        ):
+        # Step 1: raw DASH → MP4 conversion
+        if not convert_clip_to_mp4(clip_info["session_mpd"], temp_raw_path):
             return False
 
-        timestamp = creation_datetime.timestamp()
-        os.utime(temp_mp4_path, (timestamp, timestamp))
+        # Step 2: embed metadata in one pass
+        creation_datetime = datetime.fromtimestamp(clip_info["creation_time"])
+        meta = MediaMetadata(
+            creation_date=creation_datetime,
+            device=STEAM_DECK,
+            game_name=game_name,
+        )
+        if not set_video_metadata(
+            temp_raw_path, temp_final_path, meta, container="mp4"
+        ):
+            print("Warning: Metadata embedding failed, using raw file")
+            temp_final_path = temp_raw_path
 
-        print(f"Uploading clip {clip_info['clip_name']} to Immich...")
-        success = upload_video(temp_mp4_path, game_name)
+        # Step 3: filesystem timestamps
+        set_file_timestamps(temp_final_path, creation_datetime)
 
-        if success:
-            print(f"✅ Clip uploaded successfully: {clip_info['clip_name']}")
-            if game_name:
-                print(f"   Game: {game_name} (ID: {clip_info['game_id']})")
-            print(f"   Created: {datetime.fromtimestamp(clip_info['creation_time'])}")
-
+        # Step 4: upload
+        success = upload_video(temp_final_path, game_name)
         return success
 
     finally:
-        try:
-            os.unlink(temp_mp4_path)
-            if temp_mp4_path.endswith("_final.mp4"):
-                original_path = temp_mp4_path.replace("_final.mp4", ".mp4")
-                if os.path.exists(original_path):
-                    os.unlink(original_path)
-        except Exception:
-            pass
+        for path in (temp_raw_path, temp_final_path):
+            try:
+                if os.path.exists(path):
+                    os.unlink(path)
+            except Exception:
+                pass
 
 
 def get_new_clips(clips: List[Dict], last_upload_time: int) -> List[Dict]:
@@ -503,59 +360,37 @@ def load_clips_tracker() -> Dict:
 
 def main():
     """Main function to upload new game clips."""
-    print("Steam Game Clips Upload Script")
-    print("=" * 40)
-
     if not os.getenv("IMMICH_API_KEY") or not os.getenv("IMMICH_SERVER_URL"):
-        print("❌ Immich credentials not configured!")
-        print("Please set IMMICH_API_KEY and IMMICH_SERVER_URL environment variables")
+        print("Error: Immich credentials not configured")
         return
 
     tracker = load_clips_tracker()
     last_upload_time = tracker.get("last_upload_time", 0)
     uploaded_clips = tracker.get("uploaded_clips", [])
 
-    print(
-        f"Last upload time: {datetime.fromtimestamp(last_upload_time) if last_upload_time > 0 else 'Never'}"
-    )
-
-    print("Scanning Steam game clips...")
     all_clips = discover_clips()
 
     if not all_clips:
         print("No game clips found")
         return
 
-    print(f"Total clips found: {len(all_clips)}")
-
     new_clips = get_new_clips(all_clips, last_upload_time)
 
     if not new_clips:
-        print("✅ No new clips to upload")
+        print("No new clips to upload")
         return
 
-    print(f"New clips to upload: {len(new_clips)}")
+    print(f"Processing {len(new_clips)} new clip(s)...")
 
-    def get_game_name_fallback(app_id):
-        return None
-
-    try:
-        from ...resolvers.game_name import get_game_name
-    except ImportError:
-        print("Warning: game_name_resolver not available, skipping game names")
-        get_game_name = get_game_name_fallback
+    from ...resolvers.game_name import get_game_name
 
     successful_uploads = 0
     failed_uploads = 0
 
     for clip in new_clips:
-        print(f"\n🎬 Processing clip: {clip['clip_name']}")
-        print(f"   Game ID: {clip['game_id']}")
-        print(f"   Created: {datetime.fromtimestamp(clip['creation_time'])}")
-
         game_name = get_game_name(clip["game_id"])
-        if game_name:
-            print(f"   Game: {game_name}")
+        label = game_name or f"Game {clip['game_id']}"
+        print(f"  {clip['clip_name']} ({label})")
 
         if upload_clip_to_immich(clip, game_name):
             successful_uploads += 1
@@ -576,16 +411,9 @@ def main():
         tracker["uploaded_clips"] = uploaded_clips
         save_clips_tracker(tracker)
 
-    print("\n" + "=" * 40)
-    print("Clips Upload Summary:")
-    print(f"✅ Successful: {successful_uploads}")
-    print(f"❌ Failed: {failed_uploads}")
-    print(f"📊 Total processed: {len(new_clips)}")
-
-    if successful_uploads > 0:
-        print(
-            f"🕒 Last upload time updated to: {datetime.fromtimestamp(tracker['last_upload_time'])}"
-        )
+    print(
+        f"Clips: {successful_uploads} uploaded, {failed_uploads} failed out of {len(new_clips)}"
+    )
 
 
 if __name__ == "__main__":

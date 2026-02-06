@@ -11,10 +11,7 @@ from binascii import crc32
 from io import BytesIO
 from io import StringIO as unicodeIO
 
-try:
-    from collections.abc import Mapping
-except ImportError:
-    from collections import Mapping
+from collections.abc import Mapping
 
 string_type = str
 int_type = int

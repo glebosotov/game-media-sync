@@ -3,14 +3,10 @@
 
 import sys
 
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-except ImportError:
-    pass
+from dotenv import load_dotenv
 
 from game_media_sync.platforms.steam.uploader import main
 
 if __name__ == "__main__":
+    load_dotenv()
     sys.exit(main() or 0)

@@ -3,18 +3,16 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import requests
 
-try:
-    from PIL import Image
-
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
-    print("⚠️  Pillow not available. Install with: pip install Pillow")
-    print("   EXIF data will not be added to images.")
+from .metadata import (
+    STEAM_DECK,
+    DeviceInfo,
+    MediaMetadata,
+    set_image_metadata,
+)
 
 
 def extract_date_from_filename(filename: str) -> datetime:
@@ -40,101 +38,48 @@ def extract_date_from_filename(filename: str) -> datetime:
         return datetime.fromtimestamp(os.path.getctime(filename))
 
 
-def add_exif_date_to_image(
-    input_path: str,
-    creation_date: datetime,
-    game_name: str,
-    make: str = "Valve",
-    model: str = "Steam Deck",
-) -> str:
-    """
-    Add EXIF creation date to an image and return the path to the modified file.
-
-    Args:
-        input_path (str): Path to the original image
-        creation_date (datetime): Date to set in EXIF
-        game_name (str): Game name to add to image description
-        make (str): Camera manufacturer (default: "Valve")
-        model (str): Camera model (default: "Steam Deck")
-
-    Returns:
-        str: Path to the temporary file with EXIF data, or original path if failed
-    """
-    if not PIL_AVAILABLE:
-        return input_path
-
-    try:
-        with Image.open(input_path) as img:
-            if img.mode in ("RGBA", "LA", "P"):
-                img = img.convert("RGB")
-
-            img_exif = img.getexif()
-
-            from PIL.ExifTags import Base
-
-            date_string = creation_date.strftime("%Y:%m:%d %H:%M:%S")
-            img_exif[Base.DateTimeOriginal] = date_string
-            img_exif[Base.DateTimeDigitized] = date_string
-            img_exif[Base.DateTime] = date_string
-            if game_name:
-                img_exif[Base.ImageDescription] = game_name
-            img_exif[Base.Make] = make
-            img_exif[Base.Model] = model
-
-            base, ext = os.path.splitext(input_path)
-            temp_path = f"{base}_exif{ext}"
-
-            img.save(temp_path, "JPEG", exif=img_exif, quality=95)
-
-            print(
-                f"📸 Added EXIF date {creation_date.strftime('%Y:%m:%d %H:%M:%S')} to {temp_path}"
-            )
-            return temp_path
-
-    except Exception as e:
-        print(f"⚠️  Failed to add EXIF data: {e}")
-        return input_path
-
-
 def cleanup_temp_file(file_path: str, original_path: str):
-    """Clean up temporary file if it was created"""
+    """Clean up temporary file if it was created."""
     if file_path != original_path and os.path.exists(file_path):
         try:
             os.remove(file_path)
-            print(f"🧹 Cleaned up temporary file: {file_path}")
-        except Exception as e:
-            print(f"⚠️  Failed to clean up temporary file: {e}")
+        except Exception:
+            pass
 
 
 def upload_file_to_immich(
     filename: str,
     api_key: str,
     server_url: str,
-    game_name: str = None,
+    game_name: Optional[str] = None,
     is_favorite: bool = False,
     visibility: str = "timeline",
     media_type: str = "screenshot",
-    make: str = "Valve",
-    model: str = "Steam Deck",
-    creation_date: datetime = None,
+    device: DeviceInfo = STEAM_DECK,
+    creation_date: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """
     Upload a file to Immich using the correct API endpoint.
 
+    For **images** the function embeds EXIF metadata (dates, camera info,
+    game name) via :func:`set_image_metadata` before uploading.  For
+    **videos** the caller is expected to have already embedded metadata
+    (e.g. via :func:`set_video_metadata`).
+
     Args:
-        filename (str): Path to the file to upload
-        api_key (str): Immich API key (used with x-api-key header)
-        server_url (str): Immich server URL (e.g., "https://your-immich-server.com")
-        game_name (str): Optional game name for metadata
-        is_favorite (bool): Whether to mark the asset as favorite
-        visibility (str): Asset visibility. Options: "archive", "timeline", "hidden", "locked"
-        media_type (str): Type of media ("screenshot" or "video")
-        make (str): Camera manufacturer (default: "Valve")
-        model (str): Camera model (default: "Steam Deck")
-        creation_date (datetime): Optional creation date. If not provided, will be extracted from filename (images) or file timestamp (videos)
+        filename: Path to the file to upload
+        api_key: Immich API key (used with x-api-key header)
+        server_url: Immich server URL (e.g., "https://your-immich-server.com")
+        game_name: Optional game name for metadata
+        is_favorite: Whether to mark the asset as favorite
+        visibility: Asset visibility ("archive", "timeline", "hidden", "locked")
+        media_type: Type of media ("screenshot" or "video")
+        device: Device that captured the media (default: STEAM_DECK)
+        creation_date: Optional creation date.  If not provided, will be
+            extracted from filename (images) or file timestamp (videos).
 
     Returns:
-        Dict[str, Any]: API response containing upload status and asset ID
+        API response containing upload status and asset ID
 
     Raises:
         FileNotFoundError: If the specified file doesn't exist
@@ -164,31 +109,28 @@ def upload_file_to_immich(
     is_video = file_extension in [".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"]
 
     if is_video:
-        # For videos, use provided creation_date or file modification time
         if creation_date is None:
             creation_date = datetime.fromtimestamp(os.path.getmtime(filename))
         file_modified_date = datetime.fromtimestamp(os.path.getmtime(filename))
-        upload_file_path = filename  # Video metadata should be embedded in file already
-        print(f"🎬 Processing video file: {filename}")
-        print(f"🎬 Using creation date: {creation_date}")
+        upload_file_path = filename
     else:
-        # For images (screenshots), use provided creation_date or extract from filename
         if creation_date is None:
             creation_date = extract_date_from_filename(filename)
         file_modified_date = datetime.fromtimestamp(os.path.getmtime(filename))
-        upload_file_path = add_exif_date_to_image(
-            filename, creation_date, game_name, make, model
-        )
-        print(f"📸 Processing image file: {filename}")
 
-    # Debug: Show what dates we're reading
-    print(
-        f"📅 File system creation time: {datetime.fromtimestamp(os.path.getctime(filename))}"
-    )
-    print(f"📅 File system modification time: {file_modified_date}")
-    print(f"📅 Extracted from filename: {creation_date}")
-    print(f"📅 Sending to API - fileCreatedAt: {creation_date.isoformat()}")
-    print(f"📅 Sending to API - fileModifiedAt: {file_modified_date.isoformat()}")
+        meta = MediaMetadata(
+            creation_date=creation_date,
+            device=device,
+            game_name=game_name,
+        )
+
+        base, ext = os.path.splitext(filename)
+        temp_path = f"{base}_exif{ext}"
+
+        if set_image_metadata(filename, temp_path, meta):
+            upload_file_path = temp_path
+        else:
+            upload_file_path = filename
 
     try:
         with open(upload_file_path, "rb") as file:
@@ -210,18 +152,9 @@ def upload_file_to_immich(
                 "visibility": visibility,
             }
 
-            print(f"🔗 Uploading to: {upload_url}")
-            print(f"📋 Headers: {headers}")
-            print(f"📁 File: {filename}")
-            print(f"🔑 API Key: {api_key[:10]}...")
-
             response = requests.post(
                 upload_url, headers=headers, files=files, data=data, timeout=30.0
             )
-
-            print(f"📡 Response status: {response.status_code}")
-            print(f"📡 Response headers: {dict(response.headers)}")
-            print(f"📡 Response body: {response.text}")
 
             response.raise_for_status()
 
@@ -242,46 +175,65 @@ def upload_file_to_immich(
         cleanup_temp_file(upload_file_path, filename)
 
 
-# Example usage and configuration
 if __name__ == "__main__":
     IMMICH_API_KEY = os.getenv("IMMICH_API_KEY")
     IMMICH_SERVER_URL = os.getenv("IMMICH_SERVER_URL")
 
-    if not IMMICH_API_KEY:
-        print("Error: IMMICH_API_KEY environment variable not set")
-        print("Please set the IMMICH_API_KEY environment variable")
-        print("You can do this by:")
-        print("  - Exporting it in your shell: export IMMICH_API_KEY='your_key'")
-        print("  - Setting it in your system environment variables")
-        print("  - Creating a .env file and sourcing it manually")
-        exit(1)
-
-    if not IMMICH_SERVER_URL:
-        print("Error: IMMICH_SERVER_URL environment variable not set")
-        print("Please set the IMMICH_SERVER_URL environment variable")
-        print("You can do this by:")
-        print(
-            "  - Exporting it in your shell: export IMMICH_SERVER_URL='https://your-server.com'"
-        )
-        print("  - Setting it in your system environment variables")
-        print("  - Creating a .env file and sourcing it manually")
-        exit(1)
+    if not IMMICH_API_KEY or not IMMICH_SERVER_URL:
+        print("Error: Set IMMICH_API_KEY and IMMICH_SERVER_URL environment variables")
+        sys.exit(1)
 
     if len(sys.argv) < 2:
-        print("Error: No filename provided")
-        print("Usage: python immich_upload.py <filename>")
-        print("Example: python immich_upload.py screenshot.jpg")
-        exit(1)
-
-    filename = sys.argv[1]
+        print("Usage: python -m game_media_sync.core.upload <filename>")
+        sys.exit(1)
 
     try:
         result = upload_file_to_immich(
-            filename=filename,
+            filename=sys.argv[1],
             api_key=IMMICH_API_KEY,
             server_url=IMMICH_SERVER_URL,
         )
         print(f"Upload successful: {result}")
     except Exception as e:
         print(f"Upload failed: {e}")
-        exit(1)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Convenience wrappers (read credentials from env)
+# ---------------------------------------------------------------------------
+
+
+def upload_media(filename, game_name=None, media_type="screenshot"):
+    """Upload media file to Immich. Reads credentials from environment."""
+    try:
+        api_key = os.getenv("IMMICH_API_KEY")
+        server_url = os.getenv("IMMICH_SERVER_URL")
+
+        if not api_key or not server_url:
+            print("Error: Immich credentials not configured")
+            return False
+
+        return upload_file_to_immich(
+            filename=filename,
+            game_name=game_name,
+            api_key=api_key,
+            server_url=server_url,
+            is_favorite=False,
+            visibility="timeline",
+            media_type=media_type,
+        )
+
+    except Exception as e:
+        print(f"Error: Failed to upload {os.path.basename(filename)}: {e}")
+        return False
+
+
+def upload_screenshot(filename, game_name=None):
+    """Upload screenshot to Immich photo server."""
+    return upload_media(filename, game_name, "screenshot")
+
+
+def upload_video(filename, game_name=None):
+    """Upload video to Immich photo server."""
+    return upload_media(filename, game_name, "video")

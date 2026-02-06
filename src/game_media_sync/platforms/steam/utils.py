@@ -15,7 +15,7 @@ else:
 
 
 def GetSteamId():
-    d = vdf.parse(open("{0}config/loginusers.vdf".format(steamdir), encoding="utf-8"))
+    d = vdf.parse(open(f"{steamdir}config/loginusers.vdf", encoding="utf-8"))
     users = d["users"]
     for id64 in users:
         if users[id64]["MostRecent"] == "1":

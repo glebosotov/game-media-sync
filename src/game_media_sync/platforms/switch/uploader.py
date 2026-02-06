@@ -1,8 +1,8 @@
-"""Nintendo Switch 2 media uploader."""
+"""Nintendo Switch 2 media processor and uploader."""
 
 import os
 import re
-import tempfile
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -13,7 +13,6 @@ from ...core import (
     set_file_timestamps,
     set_image_metadata,
     set_video_metadata,
-    temp_upload_file,
     upload_to_immich,
 )
 
@@ -46,80 +45,43 @@ def clean_game_name(folder_name: str) -> str:
     return name.strip()
 
 
-def _upload_file(file_path: Path, game_name: str, cfg) -> bool:
+def _process_file(file_path: Path, dest_path: Path, game_name: str) -> bool:
     ext = file_path.suffix.lower()
     if ext not in SUPPORTED_EXTENSIONS:
         return False
 
     creation_date = extract_timestamp(file_path.name)
-    is_video = ext in VIDEO_EXTENSIONS
     meta = MediaMetadata(
         creation_date=creation_date, device=SWITCH2, game_name=game_name
     )
 
-    if is_video:
-        with tempfile.NamedTemporaryFile(
-            suffix=ext, delete=False, dir=file_path.parent
-        ) as tmp:
-            tmp_path = tmp.name
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with temp_upload_file(tmp_path, str(file_path)):
-            if set_video_metadata(
-                str(file_path), tmp_path, meta, container=ext.lstrip(".")
-            ):
-                set_file_timestamps(tmp_path, creation_date)
-                upload_to_immich(
-                    tmp_path,
-                    cfg.api_key,
-                    cfg.server_url,
-                    device=SWITCH2,
-                    creation_date=creation_date,
-                )
-            else:
-                set_file_timestamps(str(file_path), creation_date)
-                upload_to_immich(
-                    str(file_path),
-                    cfg.api_key,
-                    cfg.server_url,
-                    device=SWITCH2,
-                    creation_date=creation_date,
-                )
+    if ext in VIDEO_EXTENSIONS:
+        ok = set_video_metadata(
+            str(file_path), str(dest_path), meta, container=ext.lstrip(".")
+        )
     else:
-        with tempfile.NamedTemporaryFile(
-            suffix=ext, delete=False, dir=file_path.parent
-        ) as tmp:
-            tmp_path = tmp.name
+        ok = set_image_metadata(str(file_path), str(dest_path), meta)
 
-        with temp_upload_file(tmp_path, str(file_path)) as _:
-            if set_image_metadata(str(file_path), tmp_path, meta):
-                set_file_timestamps(tmp_path, creation_date)
-                upload_to_immich(
-                    tmp_path,
-                    cfg.api_key,
-                    cfg.server_url,
-                    device=SWITCH2,
-                    creation_date=creation_date,
-                )
-            else:
-                set_file_timestamps(str(file_path), creation_date)
-                upload_to_immich(
-                    str(file_path),
-                    cfg.api_key,
-                    cfg.server_url,
-                    device=SWITCH2,
-                    creation_date=creation_date,
-                )
+    if ok:
+        set_file_timestamps(str(dest_path), creation_date)
+    else:
+        shutil.copy2(str(file_path), str(dest_path))
+        set_file_timestamps(str(dest_path), creation_date)
 
     return True
 
 
-def process_switch2_folder(source_dir: str):
+def process_switch2_folder(source_dir: str, output_dir: str, *, upload: bool = True):
     source_path = Path(source_dir).resolve()
+    output_path = Path(output_dir).resolve()
+
     if not source_path.is_dir():
         print(f"Source folder not found: {source_dir}")
         return
 
-    cfg = get_immich_config()
+    cfg = get_immich_config() if upload else None
 
     ok = fail = total = 0
     for game_folder in source_path.iterdir():
@@ -132,8 +94,19 @@ def process_switch2_folder(source_dir: str):
             if not file_path.is_file() or file_path.name.startswith("."):
                 continue
             total += 1
+
+            dest_path = output_path / game_name / file_path.name
             try:
-                if _upload_file(file_path, game_name, cfg):
+                if _process_file(file_path, dest_path, game_name):
+                    if upload and cfg:
+                        creation_date = extract_timestamp(file_path.name)
+                        upload_to_immich(
+                            str(dest_path),
+                            cfg.api_key,
+                            cfg.server_url,
+                            device=SWITCH2,
+                            creation_date=creation_date,
+                        )
                     ok += 1
                 else:
                     fail += 1
@@ -141,4 +114,4 @@ def process_switch2_folder(source_dir: str):
                 print(f"  Failed {file_path.name}: {e}")
                 fail += 1
 
-    print(f"Switch: {ok} uploaded, {fail} failed / {total}")
+    print(f"Switch: {ok} processed, {fail} failed / {total}")

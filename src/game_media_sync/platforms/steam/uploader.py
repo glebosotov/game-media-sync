@@ -1,8 +1,11 @@
-"""Steam screenshot uploader."""
+"""Steam screenshot processor and uploader."""
 
 import os
-import sys
+import shutil
+import tempfile
 from datetime import datetime
+
+import vdf
 
 from ...core import (
     STEAM_DECK,
@@ -11,11 +14,9 @@ from ...core import (
     get_immich_config,
     set_file_timestamps,
     set_image_metadata,
-    temp_upload_file,
     upload_to_immich,
 )
 from ...resolvers.game_name import get_game_name
-import vdf
 from .utils import GetAccountId, steamdir
 
 TRACKING_FILE = "upload_tracker.json"
@@ -56,46 +57,62 @@ def get_all_screenshots():
         return []
 
 
-def upload_screenshot(filepath: str, game_name: str | None, cfg) -> bool:
-    """Embed image metadata and upload to Immich."""
-    import tempfile
-
+def process_screenshot(
+    filepath: str,
+    game_name: str | None,
+    cfg,
+    *,
+    output_dir: str | None = None,
+    upload: bool = True,
+) -> bool:
     creation_date = datetime.fromtimestamp(os.path.getmtime(filepath))
     meta = MediaMetadata(
         creation_date=creation_date, device=STEAM_DECK, game_name=game_name
     )
 
-    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-        tmp_path = tmp.name
+    if output_dir:
+        subfolder = game_name or "Unknown"
+        dest = os.path.join(output_dir, subfolder)
+        os.makedirs(dest, exist_ok=True)
+        dest_path = os.path.join(dest, os.path.basename(filepath))
+    else:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            dest_path = tmp.name
 
-    with temp_upload_file(tmp_path, filepath) as upload_path:
-        if not set_image_metadata(filepath, tmp_path, meta):
-            upload_path = filepath  # noqa: F841 — fall back to original
+    try:
+        if not set_image_metadata(filepath, dest_path, meta):
+            shutil.copy2(filepath, dest_path)
 
-        set_file_timestamps(upload_path, creation_date)
-        upload_to_immich(
-            upload_path,
-            cfg.api_key,
-            cfg.server_url,
-            device=STEAM_DECK,
-            creation_date=creation_date,
-        )
+        set_file_timestamps(dest_path, creation_date)
+
+        if upload and cfg:
+            upload_to_immich(
+                dest_path,
+                cfg.api_key,
+                cfg.server_url,
+                device=STEAM_DECK,
+                creation_date=creation_date,
+            )
+    finally:
+        if not output_dir:
+            try:
+                os.unlink(dest_path)
+            except OSError:
+                pass
+
     return True
 
 
-def main():
-    upload_clips = "--clips" in sys.argv or "-c" in sys.argv
-    upload_screenshots = (
-        "--screenshots" in sys.argv or "-s" in sys.argv or not upload_clips
-    )
-
-    if upload_clips and not upload_screenshots:
-        from .clips import main as clips_main
-
-        clips_main()
+def main(
+    *,
+    output_dir: str | None = None,
+    upload: bool = True,
+):
+    if not upload and not output_dir:
+        print("Nothing to do: --no-upload without --output")
         return
 
-    cfg = get_immich_config()
+    cfg = get_immich_config() if upload else None
     tracker = UploadTracker(TRACKING_FILE)
     all_screenshots = get_all_screenshots()
     if not all_screenshots:
@@ -105,8 +122,7 @@ def main():
     if not new:
         return
 
-    ok = 0
-    fail = 0
+    ok = fail = 0
     for s in new:
         if not os.path.exists(s["full_path"]):
             fail += 1
@@ -114,7 +130,13 @@ def main():
 
         game_name = get_game_name(s["game_id"])
         try:
-            upload_screenshot(s["full_path"], game_name, cfg)
+            process_screenshot(
+                s["full_path"],
+                game_name,
+                cfg,
+                output_dir=output_dir,
+                upload=upload,
+            )
             ok += 1
             tracker.record(
                 {
@@ -131,4 +153,4 @@ def main():
         tracker.update_time(max(s["creation_time"] for s in new))
         tracker.save()
 
-    print(f"Screenshots: {ok} uploaded, {fail} failed / {len(new)}")
+    print(f"Screenshots: {ok} processed, {fail} failed / {len(new)}")

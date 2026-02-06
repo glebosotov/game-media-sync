@@ -1,7 +1,8 @@
-"""Steam game clip uploader — DASH segments → MP4 → Immich."""
+"""Steam game clip processor — DASH segments → MP4, optionally upload."""
 
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from datetime import datetime
@@ -88,7 +89,6 @@ def discover_clips() -> List[Dict]:
 
 
 def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
-    """Combine DASH segments into a raw MP4 (no metadata)."""
     try:
         mpd_dir = os.path.dirname(session_mpd_path)
         all_files = os.listdir(mpd_dir)
@@ -165,15 +165,28 @@ def _concat_chunks(chunks: list[str], dest: str) -> None:
                     out.write(f.read())
 
 
-def upload_clip(clip: Dict, game_name: Optional[str], cfg) -> bool:
-    """Convert → embed metadata → upload."""
+def process_clip(
+    clip: Dict,
+    game_name: Optional[str],
+    cfg,
+    *,
+    output_dir: str | None = None,
+    upload: bool = True,
+) -> bool:
     if not clip["session_mpd"]:
         return False
 
     with tempfile.NamedTemporaryFile(suffix="_raw.mp4", delete=False) as f:
         raw_path = f.name
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
-        final_path = f.name
+
+    if output_dir:
+        subfolder = game_name or "Unknown"
+        dest = os.path.join(output_dir, subfolder)
+        os.makedirs(dest, exist_ok=True)
+        final_path = os.path.join(dest, f"{clip['clip_name']}.mp4")
+    else:
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+            final_path = f.name
 
     try:
         if not convert_clip_to_mp4(clip["session_mpd"], raw_path):
@@ -185,28 +198,42 @@ def upload_clip(clip: Dict, game_name: Optional[str], cfg) -> bool:
         )
 
         if not set_video_metadata(raw_path, final_path, meta, container="mp4"):
-            final_path = raw_path
+            shutil.copy2(raw_path, final_path)
 
         set_file_timestamps(final_path, creation_dt)
-        upload_to_immich(
-            final_path,
-            cfg.api_key,
-            cfg.server_url,
-            device=STEAM_DECK,
-            creation_date=creation_dt,
-        )
+
+        if upload and cfg:
+            upload_to_immich(
+                final_path,
+                cfg.api_key,
+                cfg.server_url,
+                device=STEAM_DECK,
+                creation_date=creation_dt,
+            )
         return True
     finally:
-        for p in (raw_path, final_path):
+        try:
+            os.unlink(raw_path)
+        except OSError:
+            pass
+        if not output_dir:
             try:
-                if os.path.exists(p):
-                    os.unlink(p)
+                if os.path.exists(final_path):
+                    os.unlink(final_path)
             except OSError:
                 pass
 
 
-def main():
-    cfg = get_immich_config()
+def main(
+    *,
+    output_dir: str | None = None,
+    upload: bool = True,
+):
+    if not upload and not output_dir:
+        print("Nothing to do: --no-upload without --output")
+        return
+
+    cfg = get_immich_config() if upload else None
     tracker = UploadTracker(TRACKING_FILE)
     all_clips = discover_clips()
     if not all_clips:
@@ -216,12 +243,11 @@ def main():
     if not new:
         return
 
-    ok = 0
-    fail = 0
+    ok = fail = 0
     for clip in new:
         game_name = get_game_name(clip["game_id"])
         try:
-            if upload_clip(clip, game_name, cfg):
+            if process_clip(clip, game_name, cfg, output_dir=output_dir, upload=upload):
                 ok += 1
                 tracker.record(
                     {
@@ -241,4 +267,4 @@ def main():
         tracker.update_time(max(c["creation_time"] for c in new))
         tracker.save()
 
-    print(f"Clips: {ok} uploaded, {fail} failed / {len(new)}")
+    print(f"Clips: {ok} processed, {fail} failed / {len(new)}")

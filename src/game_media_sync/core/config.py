@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -30,13 +29,3 @@ def get_immich_config() -> ImmichConfig:
         sys.exit(1)
 
     return ImmichConfig(server_url=server_url, api_key=api_key)  # type: ignore[arg-type]
-
-
-def require_env(name: str, *, description: Optional[str] = None) -> str:
-    """Return env var *name* or exit."""
-    value = os.getenv(name)
-    if not value:
-        hint = f" ({description})" if description else ""
-        print(f"Missing env: {name}{hint}")
-        sys.exit(1)
-    return value

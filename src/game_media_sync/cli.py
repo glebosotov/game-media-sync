@@ -9,30 +9,25 @@ from dotenv import load_dotenv
 def cmd_steam(args):
     from .platforms.steam.uploader import main as steam_main
 
-    steam_main()
+    steam_main(output_dir=args.output, upload=not args.no_upload)
 
 
 def cmd_steam_clips(args):
     from .platforms.steam.clips import main as clips_main
 
-    clips_main()
+    clips_main(output_dir=args.output, upload=not args.no_upload)
 
 
 def cmd_ps5(args):
-    from .core import require_env
     from .platforms.ps5.processor import process_files_in_folder
 
-    source = args.source or require_env("PS5_SOURCE_PATH")
-    output = args.output or require_env("PS5_OUTPUT_PATH")
-    process_files_in_folder(source, output)
+    process_files_in_folder(args.source, args.output, upload=not args.no_upload)
 
 
 def cmd_switch(args):
-    from .core import require_env
     from .platforms.switch.uploader import process_switch2_folder
 
-    source = args.source or require_env("SWITCH2_SOURCE_PATH")
-    process_switch2_folder(source)
+    process_switch2_folder(args.source, args.output, upload=not args.no_upload)
 
 
 def main():
@@ -41,20 +36,26 @@ def main():
     parser = argparse.ArgumentParser(
         prog="gms", description="Sync gaming media to Immich"
     )
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--no-upload", action="store_true", help="Skip Immich upload")
+
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("steam", help="Upload Steam screenshots")
+    steam = sub.add_parser("steam", parents=[common], help="Upload Steam screenshots")
+    steam.add_argument("--output", help="Save processed files to this folder")
 
-    sub.add_parser("steam-clips", help="Upload Steam game clips")
+    sc = sub.add_parser("steam-clips", parents=[common], help="Upload Steam game clips")
+    sc.add_argument("--output", help="Save processed files to this folder")
 
-    ps5 = sub.add_parser("ps5", help="Process PS5 media (embed metadata)")
-    ps5.add_argument("--source", help="Source folder (or PS5_SOURCE_PATH env)")
-    ps5.add_argument("--output", help="Output folder (or PS5_OUTPUT_PATH env)")
+    ps5 = sub.add_parser("ps5", parents=[common], help="Process and upload PS5 media")
+    ps5.add_argument("--source", required=True, help="Source folder")
+    ps5.add_argument("--output", required=True, help="Output folder")
 
-    sw = sub.add_parser("switch", help="Upload Nintendo Switch 2 media")
-    sw.add_argument(
-        "source", nargs="?", help="Source folder (or SWITCH2_SOURCE_PATH env)"
+    sw = sub.add_parser(
+        "switch", parents=[common], help="Process and upload Switch 2 media"
     )
+    sw.add_argument("--source", required=True, help="Source folder")
+    sw.add_argument("--output", required=True, help="Output folder")
 
     args = parser.parse_args()
 

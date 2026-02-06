@@ -12,3 +12,4 @@ autoscreenshot.path
 build/
 dist/
 steam_app_cache.json
+switch_tracker.json

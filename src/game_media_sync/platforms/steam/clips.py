@@ -8,6 +8,8 @@ import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional
 
+from rich.progress import Progress
+
 from ...core import (
     STEAM_DECK,
     MediaMetadata,
@@ -244,24 +246,29 @@ def main(
         return
 
     ok = fail = 0
-    for clip in new:
-        game_name = get_game_name(clip["game_id"])
-        try:
-            if process_clip(clip, game_name, cfg, output_dir=output_dir, upload=upload):
-                ok += 1
-                tracker.record(
-                    {
-                        "clip_name": clip["clip_name"],
-                        "game_id": clip["game_id"],
-                        "upload_time": datetime.now().isoformat(),
-                        "creation_time": clip["creation_time"],
-                    }
-                )
-            else:
+    with Progress(transient=True) as progress:
+        task = progress.add_task("Clips", total=len(new))
+        for clip in new:
+            game_name = get_game_name(clip["game_id"])
+            try:
+                if process_clip(
+                    clip, game_name, cfg, output_dir=output_dir, upload=upload
+                ):
+                    ok += 1
+                    tracker.record(
+                        {
+                            "clip_name": clip["clip_name"],
+                            "game_id": clip["game_id"],
+                            "upload_time": datetime.now().isoformat(),
+                            "creation_time": clip["creation_time"],
+                        }
+                    )
+                else:
+                    fail += 1
+            except Exception as e:
+                progress.console.print(f"  [red]✗[/red] {clip['clip_name']}: {e}")
                 fail += 1
-        except Exception as e:
-            print(f"  Failed {clip['clip_name']}: {e}")
-            fail += 1
+            progress.advance(task)
 
     if ok:
         tracker.update_time(max(c["creation_time"] for c in new))

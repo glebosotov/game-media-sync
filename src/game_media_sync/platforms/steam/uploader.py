@@ -6,6 +6,7 @@ import tempfile
 from datetime import datetime
 
 import vdf
+from rich.progress import Progress
 
 from ...core import (
     STEAM_DECK,
@@ -123,31 +124,35 @@ def main(
         return
 
     ok = fail = 0
-    for s in new:
-        if not os.path.exists(s["full_path"]):
-            fail += 1
-            continue
+    with Progress(transient=True) as progress:
+        task = progress.add_task("Screenshots", total=len(new))
+        for s in new:
+            if not os.path.exists(s["full_path"]):
+                fail += 1
+                progress.advance(task)
+                continue
 
-        game_name = get_game_name(s["game_id"])
-        try:
-            process_screenshot(
-                s["full_path"],
-                game_name,
-                cfg,
-                output_dir=output_dir,
-                upload=upload,
-            )
-            ok += 1
-            tracker.record(
-                {
-                    "filename": s["filename"],
-                    "upload_time": datetime.now().isoformat(),
-                    "creation_time": s["creation_time"],
-                }
-            )
-        except Exception as e:
-            print(f"  Failed {s['filename']}: {e}")
-            fail += 1
+            game_name = get_game_name(s["game_id"])
+            try:
+                process_screenshot(
+                    s["full_path"],
+                    game_name,
+                    cfg,
+                    output_dir=output_dir,
+                    upload=upload,
+                )
+                ok += 1
+                tracker.record(
+                    {
+                        "filename": s["filename"],
+                        "upload_time": datetime.now().isoformat(),
+                        "creation_time": s["creation_time"],
+                    }
+                )
+            except Exception as e:
+                progress.console.print(f"  [red]✗[/red] {s['filename']}: {e}")
+                fail += 1
+            progress.advance(task)
 
     if ok:
         tracker.update_time(max(s["creation_time"] for s in new))

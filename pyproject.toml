@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "Sync Steam, PS5, and Nintendo Switch media to Immich"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["requests>=2.32.0", "python-dotenv>=1.0.0", "vdf>=3.4"]
+dependencies = ["requests>=2.32.0", "python-dotenv>=1.0.0", "vdf>=3.4", "rich>=13.0"]
 
 [project.scripts]
 gms = "game_media_sync.cli:main"

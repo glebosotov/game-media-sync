@@ -6,6 +6,8 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
+from rich.progress import Progress
+
 from ...core import (
     SWITCH2,
     MediaMetadata,
@@ -83,18 +85,22 @@ def process_switch2_folder(source_dir: str, output_dir: str, *, upload: bool = T
 
     cfg = get_immich_config() if upload else None
 
-    ok = fail = total = 0
+    items = []
     for game_folder in source_path.iterdir():
         if not game_folder.is_dir() or game_folder.name.startswith("."):
             continue
-
         game_name = clean_game_name(game_folder.name) or game_folder.name
-
         for file_path in game_folder.iterdir():
-            if not file_path.is_file() or file_path.name.startswith("."):
-                continue
-            total += 1
+            if file_path.is_file() and not file_path.name.startswith("."):
+                items.append((game_name, file_path))
 
+    if not items:
+        return
+
+    ok = fail = 0
+    with Progress(transient=True) as progress:
+        task = progress.add_task("Switch", total=len(items))
+        for game_name, file_path in items:
             dest_path = output_path / game_name / file_path.name
             try:
                 if _process_file(file_path, dest_path, game_name):
@@ -111,7 +117,8 @@ def process_switch2_folder(source_dir: str, output_dir: str, *, upload: bool = T
                 else:
                     fail += 1
             except Exception as e:
-                print(f"  Failed {file_path.name}: {e}")
+                progress.console.print(f"  [red]✗[/red] {file_path.name}: {e}")
                 fail += 1
+            progress.advance(task)
 
-    print(f"Switch: {ok} processed, {fail} failed / {total}")
+    print(f"Switch: {ok} processed, {fail} failed / {len(items)}")

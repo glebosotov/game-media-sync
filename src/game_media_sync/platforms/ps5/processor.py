@@ -4,7 +4,13 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from rich.progress import Progress
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+)
 
 from ...core import (
     PS5,
@@ -36,10 +42,18 @@ def process_files_in_folder(source_dir: str, output_dir: str, *, upload: bool = 
     if not files:
         return
 
-    ok = fail = 0
-    with Progress(transient=True) as progress:
-        task = progress.add_task("PS5", total=len(files))
+    ok = dup = fail = 0
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TextColumn("{task.fields[filename]}"),
+    ) as progress:
+        task = progress.add_task("PS5", total=len(files), filename="")
         for source_file, match in files:
+            name = source_file.name
+            progress.update(task, filename=name)
             ext = source_file.suffix.lower()
             dest_file = output_path / source_file.relative_to(source_path)
             dest_file.parent.mkdir(parents=True, exist_ok=True)
@@ -58,27 +72,44 @@ def process_files_in_folder(source_dir: str, output_dir: str, *, upload: bool = 
                         container=ext.lstrip("."),
                     )
 
-                if ok_meta:
-                    set_file_timestamps(str(dest_file), dt)
-                    if upload and cfg:
-                        upload_to_immich(
-                            str(dest_file),
-                            cfg.api_key,
-                            cfg.server_url,
-                            device=PS5,
-                            creation_date=dt,
-                        )
-                    ok += 1
-                else:
+                if not ok_meta:
+                    progress.console.print(f"  [red]✗[/red] {name}: metadata failed")
                     fail += 1
+                    progress.advance(task)
+                    continue
+
+                set_file_timestamps(str(dest_file), dt)
+
+                if upload and cfg:
+                    result = upload_to_immich(
+                        str(dest_file),
+                        cfg.api_key,
+                        cfg.server_url,
+                        device=PS5,
+                        creation_date=dt,
+                    )
+                    if result.get("status") == "duplicate":
+                        progress.console.print(
+                            f"  [yellow]✓[/yellow] {name} [dim](duplicate)[/dim]"
+                        )
+                        dup += 1
+                    else:
+                        progress.console.print(f"  [green]✓[/green] {name}")
+                        ok += 1
+                else:
+                    progress.console.print(f"  [green]✓[/green] {name}")
+                    ok += 1
             except ValueError:
-                progress.console.print(
-                    f"  [red]✗[/red] {source_file.name}: invalid date"
-                )
+                progress.console.print(f"  [red]✗[/red] {name}: invalid date")
                 fail += 1
             except Exception as e:
-                progress.console.print(f"  [red]✗[/red] {source_file.name}: {e}")
+                progress.console.print(f"  [red]✗[/red] {name}: {e}")
                 fail += 1
             progress.advance(task)
 
-    print(f"PS5: {ok} processed, {fail} failed / {len(files)}")
+    parts = [f"{ok} ok"]
+    if dup:
+        parts.append(f"{dup} duplicates")
+    if fail:
+        parts.append(f"{fail} failed")
+    print(f"PS5: {', '.join(parts)} / {len(files)}")

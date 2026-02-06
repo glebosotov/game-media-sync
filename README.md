@@ -15,18 +15,18 @@ All platforms upload to Immich by default. Add `--no-upload` to skip.
 
 ```bash
 # Steam screenshots (auto-detects Steam directory)
-gms steam
-gms steam --output /path/to/output --no-upload
+gmedia steam
+gmedia steam --output /path/to/output --no-upload
 
 # Steam game clips
-gms steam-clips
-gms steam-clips --output /path/to/clips
+gmedia steam-clips
+gmedia steam-clips --output /path/to/clips
 
 # PS5
-gms ps5 --source /path/to/ps5 --output /path/to/output
+gmedia ps5 --source /path/to/ps5 --output /path/to/output
 
 # Nintendo Switch 2
-gms switch --source /path/to/switch --output /path/to/output
+gmedia switch --source /path/to/switch --output /path/to/output
 ```
 
 Environment variables (`.env`):

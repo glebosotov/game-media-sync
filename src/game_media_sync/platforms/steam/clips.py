@@ -8,7 +8,13 @@ import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from rich.progress import Progress
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+)
 
 from ...core import (
     STEAM_DECK,
@@ -174,9 +180,10 @@ def process_clip(
     *,
     output_dir: str | None = None,
     upload: bool = True,
-) -> bool:
+) -> dict | None:
+    """Process a clip. Returns Immich response dict, or None if not uploaded."""
     if not clip["session_mpd"]:
-        return False
+        raise ValueError("no session.mpd")
 
     with tempfile.NamedTemporaryFile(suffix="_raw.mp4", delete=False) as f:
         raw_path = f.name
@@ -192,7 +199,7 @@ def process_clip(
 
     try:
         if not convert_clip_to_mp4(clip["session_mpd"], raw_path):
-            return False
+            raise RuntimeError("ffmpeg conversion failed")
 
         creation_dt = datetime.fromtimestamp(clip["creation_time"])
         meta = MediaMetadata(
@@ -205,14 +212,14 @@ def process_clip(
         set_file_timestamps(final_path, creation_dt)
 
         if upload and cfg:
-            upload_to_immich(
+            return upload_to_immich(
                 final_path,
                 cfg.api_key,
                 cfg.server_url,
                 device=STEAM_DECK,
                 creation_date=creation_dt,
             )
-        return True
+        return None
     finally:
         try:
             os.unlink(raw_path)
@@ -245,33 +252,51 @@ def main(
     if not new:
         return
 
-    ok = fail = 0
-    with Progress(transient=True) as progress:
-        task = progress.add_task("Clips", total=len(new))
+    ok = dup = fail = 0
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TextColumn("{task.fields[filename]}"),
+    ) as progress:
+        task = progress.add_task("Clips", total=len(new), filename="")
         for clip in new:
+            name = clip["clip_name"]
+            progress.update(task, filename=name)
             game_name = get_game_name(clip["game_id"])
             try:
-                if process_clip(
+                result = process_clip(
                     clip, game_name, cfg, output_dir=output_dir, upload=upload
-                ):
-                    ok += 1
-                    tracker.record(
-                        {
-                            "clip_name": clip["clip_name"],
-                            "game_id": clip["game_id"],
-                            "upload_time": datetime.now().isoformat(),
-                            "creation_time": clip["creation_time"],
-                        }
+                )
+                if result and result.get("status") == "duplicate":
+                    progress.console.print(
+                        f"  [yellow]✓[/yellow] {name} [dim](duplicate)[/dim]"
                     )
+                    dup += 1
                 else:
-                    fail += 1
+                    progress.console.print(f"  [green]✓[/green] {name}")
+                    ok += 1
+                tracker.record(
+                    {
+                        "clip_name": clip["clip_name"],
+                        "game_id": clip["game_id"],
+                        "upload_time": datetime.now().isoformat(),
+                        "creation_time": clip["creation_time"],
+                    }
+                )
             except Exception as e:
-                progress.console.print(f"  [red]✗[/red] {clip['clip_name']}: {e}")
+                progress.console.print(f"  [red]✗[/red] {name}: {e}")
                 fail += 1
             progress.advance(task)
 
-    if ok:
+    if ok or dup:
         tracker.update_time(max(c["creation_time"] for c in new))
         tracker.save()
 
-    print(f"Clips: {ok} processed, {fail} failed / {len(new)}")
+    parts = [f"{ok} ok"]
+    if dup:
+        parts.append(f"{dup} duplicates")
+    if fail:
+        parts.append(f"{fail} failed")
+    print(f"Clips: {', '.join(parts)} / {len(new)}")

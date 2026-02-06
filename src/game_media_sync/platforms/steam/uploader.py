@@ -6,7 +6,13 @@ import tempfile
 from datetime import datetime
 
 import vdf
-from rich.progress import Progress
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+)
 
 from ...core import (
     STEAM_DECK,
@@ -65,7 +71,8 @@ def process_screenshot(
     *,
     output_dir: str | None = None,
     upload: bool = True,
-) -> bool:
+) -> dict | None:
+    """Process a screenshot. Returns Immich response dict, or None if not uploaded."""
     creation_date = datetime.fromtimestamp(os.path.getmtime(filepath))
     meta = MediaMetadata(
         creation_date=creation_date, device=STEAM_DECK, game_name=game_name
@@ -87,21 +94,20 @@ def process_screenshot(
         set_file_timestamps(dest_path, creation_date)
 
         if upload and cfg:
-            upload_to_immich(
+            return upload_to_immich(
                 dest_path,
                 cfg.api_key,
                 cfg.server_url,
                 device=STEAM_DECK,
                 creation_date=creation_date,
             )
+        return None
     finally:
         if not output_dir:
             try:
                 os.unlink(dest_path)
             except OSError:
                 pass
-
-    return True
 
 
 def main(
@@ -123,25 +129,42 @@ def main(
     if not new:
         return
 
-    ok = fail = 0
-    with Progress(transient=True) as progress:
-        task = progress.add_task("Screenshots", total=len(new))
+    ok = dup = fail = 0
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TextColumn("{task.fields[filename]}"),
+    ) as progress:
+        task = progress.add_task("Screenshots", total=len(new), filename="")
         for s in new:
+            name = s["filename"]
+            progress.update(task, filename=name)
+
             if not os.path.exists(s["full_path"]):
+                progress.console.print(f"  [red]✗[/red] {name}: not found")
                 fail += 1
                 progress.advance(task)
                 continue
 
             game_name = get_game_name(s["game_id"])
             try:
-                process_screenshot(
+                result = process_screenshot(
                     s["full_path"],
                     game_name,
                     cfg,
                     output_dir=output_dir,
                     upload=upload,
                 )
-                ok += 1
+                if result and result.get("status") == "duplicate":
+                    progress.console.print(
+                        f"  [yellow]✓[/yellow] {name} [dim](duplicate)[/dim]"
+                    )
+                    dup += 1
+                else:
+                    progress.console.print(f"  [green]✓[/green] {name}")
+                    ok += 1
                 tracker.record(
                     {
                         "filename": s["filename"],
@@ -150,12 +173,17 @@ def main(
                     }
                 )
             except Exception as e:
-                progress.console.print(f"  [red]✗[/red] {s['filename']}: {e}")
+                progress.console.print(f"  [red]✗[/red] {name}: {e}")
                 fail += 1
             progress.advance(task)
 
-    if ok:
+    if ok or dup:
         tracker.update_time(max(s["creation_time"] for s in new))
         tracker.save()
 
-    print(f"Screenshots: {ok} processed, {fail} failed / {len(new)}")
+    parts = [f"{ok} ok"]
+    if dup:
+        parts.append(f"{dup} duplicates")
+    if fail:
+        parts.append(f"{fail} failed")
+    print(f"Screenshots: {', '.join(parts)} / {len(new)}")

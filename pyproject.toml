@@ -7,7 +7,7 @@ requires-python = ">=3.10"
 dependencies = ["requests>=2.32.0", "python-dotenv>=1.0.0", "vdf>=3.4", "rich>=13.0"]
 
 [project.scripts]
-gms = "game_media_sync.cli:main"
+gmedia = "game_media_sync.cli:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

@@ -34,7 +34,7 @@ def main():
     load_dotenv()
 
     parser = argparse.ArgumentParser(
-        prog="gms", description="Sync gaming media to Immich"
+        prog="gmedia", description="Sync gaming media to Immich"
     )
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--no-upload", action="store_true", help="Skip Immich upload")

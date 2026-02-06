@@ -6,11 +6,18 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from rich.progress import Progress
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+)
 
 from ...core import (
     SWITCH2,
     MediaMetadata,
+    UploadTracker,
     get_immich_config,
     set_file_timestamps,
     set_image_metadata,
@@ -20,6 +27,7 @@ from ...core import (
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".mp4", ".webm", ".mov"}
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov"}
+TRACKING_FILE = "switch_tracker.json"
 
 SWITCH_SUFFIXES = [
     " – Nintendo Switch 2 Edition",
@@ -84,6 +92,7 @@ def process_switch2_folder(source_dir: str, output_dir: str, *, upload: bool = T
         return
 
     cfg = get_immich_config() if upload else None
+    tracker = UploadTracker(TRACKING_FILE)
 
     items = []
     for game_folder in source_path.iterdir():
@@ -91,34 +100,78 @@ def process_switch2_folder(source_dir: str, output_dir: str, *, upload: bool = T
             continue
         game_name = clean_game_name(game_folder.name) or game_folder.name
         for file_path in game_folder.iterdir():
-            if file_path.is_file() and not file_path.name.startswith("."):
-                items.append((game_name, file_path))
+            if not file_path.is_file() or file_path.name.startswith("."):
+                continue
+            creation_ts = int(extract_timestamp(file_path.name).timestamp())
+            if tracker.is_new(creation_ts):
+                items.append((game_name, file_path, creation_ts))
 
     if not items:
         return
 
-    ok = fail = 0
-    with Progress(transient=True) as progress:
-        task = progress.add_task("Switch", total=len(items))
-        for game_name, file_path in items:
+    ok = dup = fail = 0
+    max_ts = 0
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TextColumn("{task.fields[filename]}"),
+    ) as progress:
+        task = progress.add_task("Switch", total=len(items), filename="")
+        for game_name, file_path, creation_ts in items:
+            name = f"{game_name}/{file_path.name}"
+            progress.update(task, filename=name)
             dest_path = output_path / game_name / file_path.name
             try:
-                if _process_file(file_path, dest_path, game_name):
-                    if upload and cfg:
-                        creation_date = extract_timestamp(file_path.name)
-                        upload_to_immich(
-                            str(dest_path),
-                            cfg.api_key,
-                            cfg.server_url,
-                            device=SWITCH2,
-                            creation_date=creation_date,
-                        )
-                    ok += 1
-                else:
+                if not _process_file(file_path, dest_path, game_name):
+                    progress.console.print(f"  [red]✗[/red] {name}: unsupported")
                     fail += 1
+                    progress.advance(task)
+                    continue
+
+                if upload and cfg:
+                    creation_date = extract_timestamp(file_path.name)
+                    result = upload_to_immich(
+                        str(dest_path),
+                        cfg.api_key,
+                        cfg.server_url,
+                        device=SWITCH2,
+                        creation_date=creation_date,
+                    )
+                    if result.get("status") == "duplicate":
+                        progress.console.print(
+                            f"  [yellow]✓[/yellow] {name} [dim](duplicate)[/dim]"
+                        )
+                        dup += 1
+                    else:
+                        progress.console.print(f"  [green]✓[/green] {name}")
+                        ok += 1
+                else:
+                    progress.console.print(f"  [green]✓[/green] {name}")
+                    ok += 1
+
+                max_ts = max(max_ts, creation_ts)
+                tracker.record(
+                    {
+                        "filename": file_path.name,
+                        "game": game_name,
+                        "upload_time": datetime.now().isoformat(),
+                        "creation_time": creation_ts,
+                    }
+                )
             except Exception as e:
-                progress.console.print(f"  [red]✗[/red] {file_path.name}: {e}")
+                progress.console.print(f"  [red]✗[/red] {name}: {e}")
                 fail += 1
             progress.advance(task)
 
-    print(f"Switch: {ok} processed, {fail} failed / {len(items)}")
+    if max_ts:
+        tracker.update_time(max_ts)
+        tracker.save()
+
+    parts = [f"{ok} ok"]
+    if dup:
+        parts.append(f"{dup} duplicates")
+    if fail:
+        parts.append(f"{fail} failed")
+    print(f"Switch: {', '.join(parts)} / {len(items)}")

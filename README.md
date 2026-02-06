@@ -1,5 +1,7 @@
 # game-media-sync
 
+[![Lint](https://github.com/glebosotov/game-media-sync/actions/workflows/lint.yml/badge.svg)](https://github.com/glebosotov/game-media-sync/actions/workflows/lint.yml)
+
 Sync screenshots and clips from **Steam**, **PS5**, and **Nintendo Switch 2** to [Immich](https://immich.app/).
 
 ## Setup

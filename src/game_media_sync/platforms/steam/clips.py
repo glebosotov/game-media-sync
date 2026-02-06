@@ -19,8 +19,8 @@ import tempfile
 from datetime import datetime
 from typing import Dict, List, Optional
 
-import steamstuff
-from transfer_handler import upload_video
+from ...core.transfer import upload_video
+from .utils import GetAccountId, steamdir
 
 
 def get_exiftool_path() -> Optional[str]:
@@ -90,10 +90,8 @@ def add_camera_metadata_to_mp4(mp4_path: str) -> bool:
 def get_clips_directory() -> Optional[str]:
     """Get the Steam clips directory path."""
     try:
-        user = steamstuff.GetAccountId()
-        clips_dir = (
-            f"{steamstuff.steamdir}userdata/{user & 0xFFFFFFFF}/gamerecordings/clips"
-        )
+        user = GetAccountId()
+        clips_dir = f"{steamdir}userdata/{user & 0xFFFFFFFF}/gamerecordings/clips"
         if os.path.exists(clips_dir):
             return clips_dir
     except Exception:
@@ -542,7 +540,7 @@ def main():
         return None
 
     try:
-        from game_name_resolver import get_game_name
+        from ...resolvers.game_name import get_game_name
     except ImportError:
         print("Warning: game_name_resolver not available, skipping game names")
         get_game_name = get_game_name_fallback

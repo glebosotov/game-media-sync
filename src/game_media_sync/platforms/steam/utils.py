@@ -2,7 +2,7 @@ import os
 import platform
 import sys
 
-import vdf
+from ...utils import vdf
 
 operating_system = platform.system()
 

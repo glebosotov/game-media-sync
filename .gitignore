@@ -1,5 +1,14 @@
+.env
+.Python
+.ruff_cache/
+.venv
+*.egg-info/
+*.pyc
+*.pyd
+*.pyo
+**/__pycache__/
 /__pycache__
 autoscreenshot.path
+build/
+dist/
 steam_app_cache.json
-.env
-.venv

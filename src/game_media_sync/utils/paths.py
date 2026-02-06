@@ -1,4 +1,4 @@
-import steamstuff
+from ..platforms.steam.utils import GetAccountId
 
 with open("autoscreenshot.path", "w") as f:
     f.writelines(
@@ -6,7 +6,7 @@ with open("autoscreenshot.path", "w") as f:
 [Path]
 PathModified=%h/.local/share/Steam/userdata/{0}/760/screenshots.vdf
 Unit=autoscreenshot.service
-    """.format(steamstuff.GetAccountId())
+    """.format(GetAccountId())
     )
 
 print("Successfully generated autoscreenshot.path (probably)")

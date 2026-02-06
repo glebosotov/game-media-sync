@@ -5,3 +5,15 @@ description = "Project for syncing Steam, PS5, and Nintendo Switch media to Immi
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["requests>=2.32.0", "pillow>=11.0.0", "python-dotenv>=1.0.0"]
+
+[project.scripts]
+upload-steam = "game_media_sync.platforms.steam.uploader:main"
+upload-ps5 = "game_media_sync.platforms.ps5.processor:process_files_in_folder"
+upload-switch = "game_media_sync.platforms.switch.uploader:process_switch2_folder"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

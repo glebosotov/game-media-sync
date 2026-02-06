@@ -2,7 +2,7 @@
 # Uploads Steam screenshots and game clips to Immich photo server
 import os
 
-from immich_upload import upload_file_to_immich
+from .upload import upload_file_to_immich
 
 
 def upload_media(filename, game_name=None, media_type="screenshot"):

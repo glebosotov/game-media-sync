@@ -21,14 +21,12 @@ except ImportError:
     print("⚠️  python-dotenv not available. Install with: pip install python-dotenv")
     print("   Environment variables must be set manually.")
 
-from immich_upload import upload_file_to_immich
+from ...core.upload import upload_file_to_immich
 
 # --- CONFIGURATION ---
 # Set the path to the folder containing your Nintendo Switch 2 files
 # Files should be organized in folders by game name
-source_folder_path = os.getenv(
-    "SWITCH2_SOURCE_PATH", "/Users/glebosotov/Desktop/Switch"
-)
+source_folder_path = os.getenv("SWITCH2_SOURCE_PATH", "")
 # ---------------------
 
 
@@ -452,6 +450,10 @@ if __name__ == "__main__":
             sys.exit(0)
         else:
             source_folder_path = sys.argv[1]
+
+    if not source_folder_path:
+        print("Error: Set SWITCH2_SOURCE_PATH or pass the source path as argument.")
+        sys.exit(1)
 
     process_switch2_folder(source_folder_path)
     print("\n✅ Processing complete.")

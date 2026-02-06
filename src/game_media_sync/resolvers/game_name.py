@@ -175,7 +175,11 @@ def _try_store_api(
 # -----------------------------
 
 _CACHE_FILENAME = "steam_app_cache.json"
-_CACHE_PATH = os.path.join(os.path.dirname(__file__), _CACHE_FILENAME)
+# Store cache in project root, not in package directory
+_CACHE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+    _CACHE_FILENAME,
+)
 _cache_dict = None  # type: ignore[var-annotated]
 
 

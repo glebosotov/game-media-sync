@@ -9,10 +9,10 @@ import os
 import sys
 from datetime import datetime
 
-import steamstuff
-import vdf
-from game_name_resolver import get_game_name
-from transfer_handler import upload_screenshot
+from ...core.transfer import upload_screenshot
+from ...resolvers.game_name import get_game_name
+from ...utils import vdf
+from .utils import GetAccountId, steamdir
 
 try:
     from dotenv import load_dotenv
@@ -24,7 +24,7 @@ except ImportError:
 
 # Configuration
 TRACKING_FILE = "upload_tracker.json"
-STEAMDIR = steamstuff.steamdir
+STEAMDIR = steamdir
 
 
 def load_upload_tracker():
@@ -47,7 +47,7 @@ def save_upload_tracker(tracker_data):
 def get_all_screenshots():
     """Get all screenshots from Steam's screenshots.vdf file"""
     try:
-        user = steamstuff.GetAccountId()
+        user = GetAccountId()
         vdf_path = f"{STEAMDIR}userdata/{user & 0xFFFFFFFF}/760/screenshots.vdf"
 
         if not os.path.exists(vdf_path):
@@ -101,7 +101,7 @@ def main():
     )
 
     if upload_clips and not upload_screenshots:
-        from gameclips_uploader import main as upload_clips_main
+        from .clips import main as upload_clips_main
 
         upload_clips_main()
         return
@@ -210,7 +210,7 @@ if __name__ == "__main__":
 
         print("\n🎬 UPLOADING CLIPS")
         print("-" * 30)
-        from gameclips_uploader import main as upload_clips_main
+        from .clips import main as upload_clips_main
 
         upload_clips_main()
     else:

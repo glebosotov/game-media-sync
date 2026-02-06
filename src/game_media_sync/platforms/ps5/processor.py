@@ -6,14 +6,9 @@ from datetime import datetime
 from pathlib import Path
 
 # --- CONFIGURATION ---
-# Set the path to the folder containing your source files.
-# Example for Windows: 'C:\\Users\\YourUser\\Pictures\\MyFolder'
-# Example for macOS/Linux: '/Users/YourUser/Pictures/MyFolder'
-source_folder_path = "/Users/glebosotov/Desktop/PS5/"
-
-# Set the path where the modified files will be saved.
-# The original folder structure will be replicated here.
-output_folder_path = "/Users/glebosotov/Desktop/PS5_done"
+# Use PS5_SOURCE_PATH and PS5_OUTPUT_PATH environment variables, or pass when calling process_files_in_folder.
+source_folder_path = os.getenv("PS5_SOURCE_PATH", "")
+output_folder_path = os.getenv("PS5_OUTPUT_PATH", "")
 # ---------------------
 
 

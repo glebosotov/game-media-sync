@@ -5,18 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-try:
-    import httpx
-
-    HTTPX_AVAILABLE = True
-except ImportError:
-    HTTPX_AVAILABLE = False
-    print("⚠️  httpx not available. Install with: pip install httpx")
-    import requests
-    import urllib3
-
-    # Suppress SSL warnings
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import requests
 
 try:
     from PIL import Image
@@ -35,10 +24,8 @@ def extract_date_from_filename(filename: str) -> datetime:
     Example: 20250727170425_1.jpg -> July 27, 2025 17:04:25
     """
     try:
-        # Extract the date part (first 14 characters before the underscore)
         date_part = filename.split("_")[0]
         if len(date_part) == 14 and date_part.isdigit():
-            # Parse YYYYMMDDHHMMSS format
             year = int(date_part[0:4])
             month = int(date_part[4:6])
             day = int(date_part[6:8])
@@ -48,15 +35,17 @@ def extract_date_from_filename(filename: str) -> datetime:
 
             return datetime(year, month, day, hour, minute, second)
         else:
-            # Fallback to file system timestamp
             return datetime.fromtimestamp(os.path.getctime(filename))
     except (ValueError, IndexError):
-        # Fallback to file system timestamp if parsing fails
         return datetime.fromtimestamp(os.path.getctime(filename))
 
 
 def add_exif_date_to_image(
-    input_path: str, creation_date: datetime, game_name: str
+    input_path: str,
+    creation_date: datetime,
+    game_name: str,
+    make: str = "Valve",
+    model: str = "Steam Deck",
 ) -> str:
     """
     Add EXIF creation date to an image and return the path to the modified file.
@@ -64,6 +53,9 @@ def add_exif_date_to_image(
     Args:
         input_path (str): Path to the original image
         creation_date (datetime): Date to set in EXIF
+        game_name (str): Game name to add to image description
+        make (str): Camera manufacturer (default: "Valve")
+        model (str): Camera model (default: "Steam Deck")
 
     Returns:
         str: Path to the temporary file with EXIF data, or original path if failed
@@ -72,32 +64,26 @@ def add_exif_date_to_image(
         return input_path
 
     try:
-        # Open the image
         with Image.open(input_path) as img:
-            # Convert to RGB if necessary (JPEG requires RGB)
             if img.mode in ("RGBA", "LA", "P"):
                 img = img.convert("RGB")
 
-            # Get existing EXIF data
             img_exif = img.getexif()
 
-            # Set creation date in EXIF using proper tag constants
             from PIL.ExifTags import Base
 
             date_string = creation_date.strftime("%Y:%m:%d %H:%M:%S")
             img_exif[Base.DateTimeOriginal] = date_string
             img_exif[Base.DateTimeDigitized] = date_string
             img_exif[Base.DateTime] = date_string
-            img_exif[Base.ImageDescription] = game_name
-            img_exif[Base.Make] = "Valve"
-            img_exif[Base.Model] = "Steam Deck"
-
-            # Create a temporary file path without replacing leading dot in directories
+            if game_name:
+                img_exif[Base.ImageDescription] = game_name
+            img_exif[Base.Make] = make
+            img_exif[Base.Model] = model
 
             base, ext = os.path.splitext(input_path)
             temp_path = f"{base}_exif{ext}"
 
-            # Save with modified EXIF data
             img.save(temp_path, "JPEG", exif=img_exif, quality=95)
 
             print(
@@ -128,6 +114,9 @@ def upload_file_to_immich(
     is_favorite: bool = False,
     visibility: str = "timeline",
     media_type: str = "screenshot",
+    make: str = "Valve",
+    model: str = "Steam Deck",
+    creation_date: datetime = None,
 ) -> Dict[str, Any]:
     """
     Upload a file to Immich using the correct API endpoint.
@@ -136,8 +125,13 @@ def upload_file_to_immich(
         filename (str): Path to the file to upload
         api_key (str): Immich API key (used with x-api-key header)
         server_url (str): Immich server URL (e.g., "https://your-immich-server.com")
+        game_name (str): Optional game name for metadata
         is_favorite (bool): Whether to mark the asset as favorite
         visibility (str): Asset visibility. Options: "archive", "timeline", "hidden", "locked"
+        media_type (str): Type of media ("screenshot" or "video")
+        make (str): Camera manufacturer (default: "Valve")
+        model (str): Camera model (default: "Steam Deck")
+        creation_date (datetime): Optional creation date. If not provided, will be extracted from filename (images) or file timestamp (videos)
 
     Returns:
         Dict[str, Any]: API response containing upload status and asset ID
@@ -148,7 +142,6 @@ def upload_file_to_immich(
         ValueError: If the API response indicates an error
     """
 
-    # Check if file exists
     if not os.path.exists(filename):
         raise FileNotFoundError(f"File not found: {filename}")
 
@@ -159,33 +152,33 @@ def upload_file_to_immich(
             sha1_hash.update(chunk)
     checksum = sha1_hash.hexdigest()
 
-    # Prepare the upload URL - try the base assets endpoint
     upload_url = f"{server_url.rstrip('/')}/api/assets"
 
-    # Prepare headers - try different authentication methods
     headers = {
         "Accept": "application/json",
         "x-api-key": api_key,
         "x-immich-checksum": checksum,
     }
 
-    # Determine file type and extract creation date accordingly
     file_extension = Path(filename).suffix.lower()
     is_video = file_extension in [".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"]
 
     if is_video:
-        # For videos, use file modification time (which we set to the original clip time)
-        # This is more reliable than creation time for converted files
-        creation_date = datetime.fromtimestamp(os.path.getmtime(filename))
+        # For videos, use provided creation_date or file modification time
+        if creation_date is None:
+            creation_date = datetime.fromtimestamp(os.path.getmtime(filename))
         file_modified_date = datetime.fromtimestamp(os.path.getmtime(filename))
-        upload_file_path = filename  # No EXIF processing for videos
+        upload_file_path = filename  # Video metadata should be embedded in file already
         print(f"🎬 Processing video file: {filename}")
-        print(f"🎬 Using modification time as creation date: {creation_date}")
+        print(f"🎬 Using creation date: {creation_date}")
     else:
-        # For images (screenshots), use the existing logic
-        creation_date = extract_date_from_filename(filename)
+        # For images (screenshots), use provided creation_date or extract from filename
+        if creation_date is None:
+            creation_date = extract_date_from_filename(filename)
         file_modified_date = datetime.fromtimestamp(os.path.getmtime(filename))
-        upload_file_path = add_exif_date_to_image(filename, creation_date, game_name)
+        upload_file_path = add_exif_date_to_image(
+            filename, creation_date, game_name, make, model
+        )
         print(f"📸 Processing image file: {filename}")
 
     # Debug: Show what dates we're reading
@@ -198,7 +191,6 @@ def upload_file_to_immich(
     print(f"📅 Sending to API - fileModifiedAt: {file_modified_date.isoformat()}")
 
     try:
-        # Prepare form data with file
         with open(upload_file_path, "rb") as file:
             files = {
                 "assetData": (
@@ -218,63 +210,43 @@ def upload_file_to_immich(
                 "visibility": visibility,
             }
 
-            # Make the upload request with SSL configuration
             print(f"🔗 Uploading to: {upload_url}")
             print(f"📋 Headers: {headers}")
             print(f"📁 File: {filename}")
             print(f"🔑 API Key: {api_key[:10]}...")
 
-            # Use httpx if available, otherwise fallback to requests
-            if HTTPX_AVAILABLE:
-                # Use httpx with SSL bypass
-                with httpx.Client(timeout=30.0) as client:
-                    # httpx handles multipart differently
-                    response = client.post(
-                        upload_url, headers=headers, files=files, data=data
-                    )
-            else:
-                # Fallback to requests
-                session = requests.Session()
-                session.verify = False
-                response = session.post(
-                    upload_url, headers=headers, files=files, data=data
-                )
+            response = requests.post(
+                upload_url, headers=headers, files=files, data=data, timeout=30.0
+            )
 
             print(f"📡 Response status: {response.status_code}")
             print(f"📡 Response headers: {dict(response.headers)}")
             print(f"📡 Response body: {response.text}")
 
-            # Check if request was successful
             response.raise_for_status()
 
-            # Parse response
             try:
                 result = response.json()
             except ValueError:
-                # If response is not JSON, return the text
                 result = {
                     "response_text": response.text,
                     "status_code": response.status_code,
                 }
 
-            # Check for API-level errors
             if "error" in result:
                 raise ValueError(f"API Error: {result['error']}")
 
             return result
 
     finally:
-        # Clean up temporary file if it was created
         cleanup_temp_file(upload_file_path, filename)
 
 
 # Example usage and configuration
 if __name__ == "__main__":
-    # Configuration - read from environment variables
     IMMICH_API_KEY = os.getenv("IMMICH_API_KEY")
     IMMICH_SERVER_URL = os.getenv("IMMICH_SERVER_URL")
 
-    # Check if required environment variables are set
     if not IMMICH_API_KEY:
         print("Error: IMMICH_API_KEY environment variable not set")
         print("Please set the IMMICH_API_KEY environment variable")
@@ -295,7 +267,6 @@ if __name__ == "__main__":
         print("  - Creating a .env file and sourcing it manually")
         exit(1)
 
-    # Check if filename argument is provided
     if len(sys.argv) < 2:
         print("Error: No filename provided")
         print("Usage: python immich_upload.py <filename>")
@@ -304,7 +275,6 @@ if __name__ == "__main__":
 
     filename = sys.argv[1]
 
-    # Example: Upload a single file
     try:
         result = upload_file_to_immich(
             filename=filename,

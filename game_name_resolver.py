@@ -45,7 +45,6 @@ def _try_steamdb(app_id: int, timeout: float = 5.0) -> Optional[str]:
         return text or None
 
     def _parse_html_for_name(html_text: str) -> Optional[str]:
-        # 1) <title>
         m = re.search(
             r"<title>(.*?)</title>", html_text, flags=re.IGNORECASE | re.DOTALL
         )
@@ -54,7 +53,6 @@ def _try_steamdb(app_id: int, timeout: float = 5.0) -> Optional[str]:
             if cleaned:
                 return cleaned
 
-        # 2) OpenGraph meta: <meta property="og:title" content="...">
         m = re.search(
             r"<meta[^>]+property=\"og:title\"[^>]+content=\"(.*?)\"",
             html_text,
@@ -65,7 +63,6 @@ def _try_steamdb(app_id: int, timeout: float = 5.0) -> Optional[str]:
             if cleaned:
                 return cleaned
 
-        # 3) Twitter title
         m = re.search(
             r"<meta[^>]+name=\"twitter:title\"[^>]+content=\"(.*?)\"",
             html_text,
@@ -76,7 +73,6 @@ def _try_steamdb(app_id: int, timeout: float = 5.0) -> Optional[str]:
             if cleaned:
                 return cleaned
 
-        # 4) JSON-LD
         m = re.search(
             r"<script[^>]+type=\"application/ld\+json\"[^>]*>(.*?)</script>",
             html_text,
@@ -94,7 +90,6 @@ def _try_steamdb(app_id: int, timeout: float = 5.0) -> Optional[str]:
             except Exception:
                 pass
 
-        # 5) <h1>
         m = re.search(
             r"<h1[^>]*>(.*?)</h1>", html_text, flags=re.IGNORECASE | re.DOTALL
         )
@@ -114,7 +109,6 @@ def _try_steamdb(app_id: int, timeout: float = 5.0) -> Optional[str]:
         if name:
             return name
 
-        # Try the info subpage as a fallback
         resp2 = requests.get(url + "info/", headers=headers, timeout=timeout)
         resp2.raise_for_status()
         html_text2 = resp2.text
@@ -132,17 +126,14 @@ def get_game_name(app_id: int) -> Optional[str]:
 
     Returns the name string if found, else None.
     """
-    # 0) Local persistent cache
     cached = _get_cached_name(app_id)
     if cached:
         return cached
 
-    # 1) Prefer official Steam Store API
     name = _try_store_api(app_id)
     if name:
         _set_cached_name(app_id, name)
         return name
-    # 2) Fallback to SteamDB HTML parsing
     name = _try_steamdb(app_id)
     if name:
         _set_cached_name(app_id, name)
@@ -214,7 +205,6 @@ def _save_cache() -> None:
             json.dump(_load_cache(), f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, _CACHE_PATH)
     except Exception:
-        # Ignore cache write errors
         pass
 
 
@@ -235,7 +225,6 @@ def _set_cached_name(app_id: int, name: str) -> None:
 
 
 if __name__ == "__main__":
-    # Basic CLI for ad-hoc testing: python game_name_resolver.py <app_id>
     import sys
 
     if len(sys.argv) != 2:

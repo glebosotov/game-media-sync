@@ -14,7 +14,6 @@ def upload_media(filename, game_name=None, media_type="screenshot"):
         media_type: Type of media ("screenshot" or "video")
     """
     try:
-        # Check if Immich credentials are configured
         api_key = os.getenv("IMMICH_API_KEY")
         server_url = os.getenv("IMMICH_SERVER_URL")
 
@@ -27,7 +26,6 @@ def upload_media(filename, game_name=None, media_type="screenshot"):
 
         print(f"Uploading {media_type} {filename} to Immich...")
 
-        # Upload to Immich
         result = upload_file_to_immich(
             filename=filename,
             game_name=game_name,

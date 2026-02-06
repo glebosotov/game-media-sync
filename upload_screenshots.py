@@ -54,11 +54,9 @@ def get_all_screenshots():
             print(f"Screenshots file not found: {vdf_path}")
             return []
 
-        # Parse the screenshots.vdf file
         with open(vdf_path, "r") as f:
             d = vdf.parse(f)
 
-        # Handle case inconsistency
         if "screenshots" in d:
             screenshots = d["screenshots"]
         elif "Screenshots" in d:
@@ -67,7 +65,6 @@ def get_all_screenshots():
             print("No screenshots found in VDF file")
             return []
 
-        # Collect all screenshots with metadata
         all_screenshots = []
         for game in screenshots:
             for screenshot_id in screenshots[game]:
@@ -83,7 +80,6 @@ def get_all_screenshots():
                         }
                     )
 
-        # Sort by creation time (oldest first)
         all_screenshots.sort(key=lambda x: x["creation_time"])
         return all_screenshots
 
@@ -99,14 +95,12 @@ def get_new_screenshots(screenshots, last_upload_time):
 
 def main():
     """Main function to upload new screenshots and clips"""
-    # Check command line arguments
     upload_clips = "--clips" in sys.argv or "-c" in sys.argv
     upload_screenshots = (
         "--screenshots" in sys.argv or "-s" in sys.argv or not upload_clips
     )
 
     if upload_clips and not upload_screenshots:
-        # Only upload clips
         from gameclips_uploader import main as upload_clips_main
 
         upload_clips_main()
@@ -115,13 +109,11 @@ def main():
     print("Steam Screenshot Upload Script")
     print("=" * 40)
 
-    # Check if Immich credentials are configured
     if not os.getenv("IMMICH_API_KEY") or not os.getenv("IMMICH_SERVER_URL"):
         print("❌ Immich credentials not configured!")
         print("Please set IMMICH_API_KEY and IMMICH_SERVER_URL environment variables")
         return
 
-    # Load upload tracker
     tracker = load_upload_tracker()
     last_upload_time = tracker.get("last_upload_time", 0)
     uploaded_screenshots = tracker.get("uploaded_screenshots", [])
@@ -130,7 +122,6 @@ def main():
         f"Last upload time: {datetime.fromtimestamp(last_upload_time) if last_upload_time > 0 else 'Never'}"
     )
 
-    # Get all screenshots
     print("Scanning Steam screenshots...")
     all_screenshots = get_all_screenshots()
 
@@ -140,7 +131,6 @@ def main():
 
     print(f"Total screenshots found: {len(all_screenshots)}")
 
-    # Get new screenshots since last upload
     new_screenshots = get_new_screenshots(all_screenshots, last_upload_time)
 
     if not new_screenshots:
@@ -149,7 +139,6 @@ def main():
 
     print(f"New screenshots to upload: {len(new_screenshots)}")
 
-    # Upload new screenshots
     successful_uploads = 0
     failed_uploads = 0
 
@@ -164,15 +153,12 @@ def main():
             failed_uploads += 1
             continue
 
-        # try to get game name
         game_name = get_game_name(screenshot["game_id"])
         print(f"   Game Name: {game_name}")
 
-        # Upload to Immich
         if upload_screenshot(screenshot["full_path"], game_name):
             print("   ✅ Upload successful")
             successful_uploads += 1
-            # Update tracker
             uploaded_screenshots.append(
                 {
                     "filename": screenshot["filename"],
@@ -184,14 +170,12 @@ def main():
             print("   ❌ Upload failed")
             failed_uploads += 1
 
-    # Update tracker with latest upload time
     if successful_uploads > 0:
         latest_upload_time = max(s["creation_time"] for s in new_screenshots)
         tracker["last_upload_time"] = latest_upload_time
         tracker["uploaded_screenshots"] = uploaded_screenshots
         save_upload_tracker(tracker)
 
-    # Summary
     print("\n" + "=" * 40)
     print("Upload Summary:")
     print(f"✅ Successful: {successful_uploads}")
@@ -216,17 +200,14 @@ if __name__ == "__main__":
         print("  python upload_screenshots.py --help    # Show this help")
         sys.exit(0)
 
-    # Check for --both flag to upload both
     if "--both" in sys.argv:
         print("Uploading both screenshots and clips...")
         print("=" * 50)
 
-        # Upload screenshots first
         print("\n📸 UPLOADING SCREENSHOTS")
         print("-" * 30)
-        main()  # This will upload screenshots
+        main()
 
-        # Then upload clips
         print("\n🎬 UPLOADING CLIPS")
         print("-" * 30)
         from gameclips_uploader import main as upload_clips_main

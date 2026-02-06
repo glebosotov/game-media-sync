@@ -29,7 +29,6 @@ def get_exiftool_path() -> Optional[str]:
     if not exiftool_dir:
         return None
 
-    # Try common exiftool executable names
     possible_names = ["exiftool", "exiftool.exe"]
     for name in possible_names:
         exiftool_path = os.path.join(exiftool_dir, name)
@@ -54,7 +53,6 @@ def add_camera_metadata_to_mp4(mp4_path: str) -> bool:
         return False
 
     try:
-        # Use exiftool to add camera and make metadata
         cmd = [
             exiftool_path,
             "-overwrite_original",
@@ -202,15 +200,12 @@ def convert_clip_to_mp4(
         # Get the directory containing the MPD file and chunks
         mpd_dir = os.path.dirname(session_mpd_path)
 
-        # Find video and audio chunks
         video_chunks = []
         audio_chunks = []
 
-        # Debug: Show all files in the directory
         all_files = os.listdir(mpd_dir)
         print(f"📂 Files in MPD directory: {all_files}")
 
-        # Look for init files and chunk files, ensuring init comes first
         video_init = None
         audio_init = None
         video_chunk_files = []
@@ -226,11 +221,9 @@ def convert_clip_to_mp4(
             elif file.startswith("chunk-stream1-") and file.endswith(".m4s"):
                 audio_chunk_files.append(os.path.join(mpd_dir, file))
 
-        # Sort chunk files to ensure proper order
         video_chunk_files.sort()
         audio_chunk_files.sort()
 
-        # Build final lists: init first, then chunks
         video_chunks = []
         audio_chunks = []
 
@@ -249,7 +242,6 @@ def convert_clip_to_mp4(
             print("❌ No video chunks found")
             return False
 
-        # Create temporary files for combined streams
         with tempfile.NamedTemporaryFile(
             suffix="_video.mp4", delete=False
         ) as temp_video:
@@ -261,7 +253,6 @@ def convert_clip_to_mp4(
             temp_audio_path = temp_audio.name
 
         try:
-            # Combine video chunks
             if video_chunks:
                 print("🔗 Combining video chunks...")
                 print(f"📹 Video chunks: {[os.path.basename(f) for f in video_chunks]}")
@@ -277,7 +268,6 @@ def convert_clip_to_mp4(
                         else:
                             print(f"  ❌ Missing chunk: {chunk}")
 
-                # Verify the combined file was created and has content
                 if os.path.exists(temp_video_path):
                     video_size = os.path.getsize(temp_video_path)
                     print(
@@ -287,7 +277,6 @@ def convert_clip_to_mp4(
                     print("❌ Failed to create combined video file")
                     return False
 
-            # Combine audio chunks (if any)
             if audio_chunks:
                 print("🔗 Combining audio chunks...")
                 print(f"🔊 Audio chunks: {[os.path.basename(f) for f in audio_chunks]}")
@@ -303,7 +292,6 @@ def convert_clip_to_mp4(
                         else:
                             print(f"  ❌ Missing chunk: {chunk}")
 
-                # Verify the combined file was created and has content
                 if os.path.exists(temp_audio_path):
                     audio_size = os.path.getsize(temp_audio_path)
                     print(
@@ -313,9 +301,7 @@ def convert_clip_to_mp4(
                     print("❌ Failed to create combined audio file")
                     return False
 
-            # Use FFmpeg to combine video and audio streams (based on reference)
             if audio_chunks:
-                # Both video and audio - using reference approach
                 cmd = [
                     "ffmpeg",
                     "-y",
@@ -331,7 +317,6 @@ def convert_clip_to_mp4(
                     "50M",
                 ]
             else:
-                # Video only - using reference approach
                 cmd = [
                     "ffmpeg",
                     "-y",
@@ -345,7 +330,6 @@ def convert_clip_to_mp4(
                     "50M",
                 ]
 
-            # Add metadata if provided
             if creation_datetime:
                 cmd.extend(
                     [
@@ -373,12 +357,10 @@ def convert_clip_to_mp4(
                         ]
                     )
 
-            # Add output path
             cmd.append(output_path)
 
             print(f"🎬 Final FFmpeg command: {' '.join(cmd)}")
 
-            # Check if input files exist and have content
             if os.path.exists(temp_video_path):
                 video_size = os.path.getsize(temp_video_path)
                 print(f"📹 Input video file: {temp_video_path} ({video_size} bytes)")
@@ -404,7 +386,6 @@ def convert_clip_to_mp4(
                 output_size = os.path.getsize(output_path)
                 print(f"✅ Conversion successful: {output_path} ({output_size} bytes)")
 
-                # Add camera metadata using exiftool
                 if not add_camera_metadata_to_mp4(output_path):
                     print(
                         "⚠️  Camera metadata addition failed, but conversion was successful"
@@ -419,7 +400,6 @@ def convert_clip_to_mp4(
                 return False
 
         finally:
-            # Clean up temporary files
             try:
                 os.unlink(temp_video_path)
                 if audio_chunks:
@@ -446,21 +426,17 @@ def upload_clip_to_immich(clip_info: Dict, game_name: Optional[str] = None) -> b
         print(f"No session.mpd found for clip {clip_info['clip_name']}")
         return False
 
-    # Create temporary MP4 file
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_file:
         temp_mp4_path = temp_file.name
 
     try:
-        # Debug: Check MPD file and directory structure
         print(f"Converting clip {clip_info['clip_name']}...")
         print(f"📁 Session MPD path: {clip_info['session_mpd']}")
 
-        # Check if MPD file exists and show its size
         if os.path.exists(clip_info["session_mpd"]):
             mpd_size = os.path.getsize(clip_info["session_mpd"])
             print(f"📄 MPD file size: {mpd_size} bytes")
 
-            # Show directory contents for debugging
             mpd_dir = os.path.dirname(clip_info["session_mpd"])
             try:
                 dir_contents = os.listdir(mpd_dir)
@@ -468,7 +444,6 @@ def upload_clip_to_immich(clip_info: Dict, game_name: Optional[str] = None) -> b
             except Exception:
                 pass
 
-        # Convert MPD to MP4 with metadata and timestamps
         creation_datetime = datetime.fromtimestamp(clip_info["creation_time"])
 
         if not convert_clip_to_mp4(
@@ -476,12 +451,9 @@ def upload_clip_to_immich(clip_info: Dict, game_name: Optional[str] = None) -> b
         ):
             return False
 
-        # Set file system timestamps
         timestamp = creation_datetime.timestamp()
         os.utime(temp_mp4_path, (timestamp, timestamp))
 
-        # Upload to Immich using regular video upload function
-        # The file timestamps are now set correctly, so Immich will read the right date
         print(f"Uploading clip {clip_info['clip_name']} to Immich...")
         success = upload_video(temp_mp4_path, game_name)
 
@@ -494,10 +466,8 @@ def upload_clip_to_immich(clip_info: Dict, game_name: Optional[str] = None) -> b
         return success
 
     finally:
-        # Clean up temporary files
         try:
             os.unlink(temp_mp4_path)
-            # Also clean up the original temp file if we created a final version
             if temp_mp4_path.endswith("_final.mp4"):
                 original_path = temp_mp4_path.replace("_final.mp4", ".mp4")
                 if os.path.exists(original_path):
@@ -538,13 +508,11 @@ def main():
     print("Steam Game Clips Upload Script")
     print("=" * 40)
 
-    # Check if Immich credentials are configured
     if not os.getenv("IMMICH_API_KEY") or not os.getenv("IMMICH_SERVER_URL"):
         print("❌ Immich credentials not configured!")
         print("Please set IMMICH_API_KEY and IMMICH_SERVER_URL environment variables")
         return
 
-    # Load clips tracker
     tracker = load_clips_tracker()
     last_upload_time = tracker.get("last_upload_time", 0)
     uploaded_clips = tracker.get("uploaded_clips", [])
@@ -553,7 +521,6 @@ def main():
         f"Last upload time: {datetime.fromtimestamp(last_upload_time) if last_upload_time > 0 else 'Never'}"
     )
 
-    # Discover all clips
     print("Scanning Steam game clips...")
     all_clips = discover_clips()
 
@@ -563,7 +530,6 @@ def main():
 
     print(f"Total clips found: {len(all_clips)}")
 
-    # Get new clips since last upload
     new_clips = get_new_clips(all_clips, last_upload_time)
 
     if not new_clips:
@@ -572,7 +538,6 @@ def main():
 
     print(f"New clips to upload: {len(new_clips)}")
 
-    # Import game name resolver
     def get_game_name_fallback(app_id):
         return None
 
@@ -582,7 +547,6 @@ def main():
         print("Warning: game_name_resolver not available, skipping game names")
         get_game_name = get_game_name_fallback
 
-    # Upload new clips
     successful_uploads = 0
     failed_uploads = 0
 
@@ -591,15 +555,12 @@ def main():
         print(f"   Game ID: {clip['game_id']}")
         print(f"   Created: {datetime.fromtimestamp(clip['creation_time'])}")
 
-        # Get game name
         game_name = get_game_name(clip["game_id"])
         if game_name:
             print(f"   Game: {game_name}")
 
-        # Upload clip
         if upload_clip_to_immich(clip, game_name):
             successful_uploads += 1
-            # Update tracker
             uploaded_clips.append(
                 {
                     "clip_name": clip["clip_name"],
@@ -611,14 +572,12 @@ def main():
         else:
             failed_uploads += 1
 
-    # Update tracker with latest upload time
     if successful_uploads > 0:
         latest_upload_time = max(c["creation_time"] for c in new_clips)
         tracker["last_upload_time"] = latest_upload_time
         tracker["uploaded_clips"] = uploaded_clips
         save_clips_tracker(tracker)
 
-    # Summary
     print("\n" + "=" * 40)
     print("Clips Upload Summary:")
     print(f"✅ Successful: {successful_uploads}")

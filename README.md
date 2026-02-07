@@ -4,6 +4,11 @@
 
 Sync screenshots and clips from **Steam**, **PS5**, and **Nintendo Switch 2** to [Immich](https://immich.app/).
 
+<img src="img/sync-media-to-immich.webp" alt="Sync media to Immich" width="600">
+
+> **⚠️ Warning**  
+> This project was made with heavy AI assiatance. Although it works for me it may require some tweaks for you. Feel free to open an issue in case of troubles, but keep in mind that you are responsible for your files.
+
 ## Setup
 
 ```bash

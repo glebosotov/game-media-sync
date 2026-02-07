@@ -15,6 +15,7 @@ from rich.progress import (
 from ...core import (
     PS5,
     MediaMetadata,
+    UploadTracker,
     get_immich_config,
     set_file_timestamps,
     set_image_metadata,
@@ -24,12 +25,14 @@ from ...core import (
 
 SUPPORTED_EXTENSIONS = {".jpg", ".mp4", ".webm"}
 TIMESTAMP_RE = re.compile(r"(?P<ts>\d{14})")
+TRACKING_FILE = "ps5_tracker.json"
 
 
 def process_files_in_folder(source_dir: str, output_dir: str, *, upload: bool = True):
     source_path = Path(source_dir).resolve()
     output_path = Path(output_dir).resolve()
     cfg = get_immich_config() if upload else None
+    tracker = UploadTracker(TRACKING_FILE)
 
     files = []
     for f in source_path.rglob("*"):
@@ -37,12 +40,16 @@ def process_files_in_folder(source_dir: str, output_dir: str, *, upload: bool = 
             continue
         m = TIMESTAMP_RE.search(f.stem)
         if m:
-            files.append((f, m))
+            dt = datetime.strptime(m.group("ts"), "%Y%m%d%H%M%S")
+            creation_ts = int(dt.timestamp())
+            if tracker.is_new(creation_ts):
+                files.append((f, m, creation_ts))
 
     if not files:
         return
 
     ok = dup = fail = 0
+    max_ts = 0
     with Progress(
         SpinnerColumn(),
         TextColumn("[bold]{task.description}"),
@@ -51,7 +58,7 @@ def process_files_in_folder(source_dir: str, output_dir: str, *, upload: bool = 
         TextColumn("{task.fields[filename]}"),
     ) as progress:
         task = progress.add_task("PS5", total=len(files), filename="")
-        for source_file, match in files:
+        for source_file, match, creation_ts in files:
             name = source_file.name
             progress.update(task, filename=name)
             ext = source_file.suffix.lower()
@@ -99,6 +106,15 @@ def process_files_in_folder(source_dir: str, output_dir: str, *, upload: bool = 
                 else:
                     progress.console.print(f"  [green]✓[/green] {name}")
                     ok += 1
+
+                max_ts = max(max_ts, creation_ts)
+                tracker.record(
+                    {
+                        "filename": source_file.name,
+                        "upload_time": datetime.now().isoformat(),
+                        "creation_time": creation_ts,
+                    }
+                )
             except ValueError:
                 progress.console.print(f"  [red]✗[/red] {name}: invalid date")
                 fail += 1
@@ -106,6 +122,10 @@ def process_files_in_folder(source_dir: str, output_dir: str, *, upload: bool = 
                 progress.console.print(f"  [red]✗[/red] {name}: {e}")
                 fail += 1
             progress.advance(task)
+
+    if max_ts:
+        tracker.update_time(max_ts)
+        tracker.save()
 
     parts = [f"{ok} ok"]
     if dup:
